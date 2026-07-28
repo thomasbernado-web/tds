@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>TDS — Todo Santo Dia</title>
+<style>
+  :root{
+    --verde:#1e9e5a; --verde-esc:#157a44; --vermelho:#d64541; --laranja:#e8862d;
+    --fundo:#f4f6f5; --carta:#ffffff; --tinta:#1d2b26; --cinza:#7a8a84; --linha:#e3e9e6;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  body{margin:0; font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif; background:var(--fundo); color:var(--tinta); padding-bottom:110px;}
+  header{background:var(--verde); color:#fff; padding:14px 16px 10px; position:sticky; top:0; z-index:5; box-shadow:0 2px 8px rgba(0,0,0,.15);}
+  header h1{margin:0; font-size:1.25rem; letter-spacing:.3px;}
+  header .sub{font-size:.8rem; opacity:.92; margin-top:2px;}
+  main{padding:12px; max-width:560px; margin:0 auto;}
+  .secao-titulo{font-size:.78rem; font-weight:700; color:var(--cinza); text-transform:uppercase; letter-spacing:.8px; margin:16px 4px 6px;}
+  .card{background:var(--carta); border:1px solid var(--linha); border-radius:14px; padding:12px; margin-bottom:8px; display:flex; align-items:center; gap:10px;}
+  .card .info{flex:1; min-width:0;}
+  .card .nome{font-weight:600; font-size:1rem;}
+  .card .meta{font-size:.78rem; color:var(--cinza); margin-top:1px;}
+  .card input.tem{width:76px; padding:10px 8px; font-size:1.05rem; text-align:center; border:1.5px solid var(--linha); border-radius:10px; background:#fafcfb;}
+  .card input.tem:focus{outline:none; border-color:var(--verde);}
+  .chip{font-size:.68rem; font-weight:700; padding:3px 8px; border-radius:99px; white-space:nowrap;}
+  .chip.ok{background:#e2f5ea; color:var(--verde-esc);}
+  .chip.comprar{background:#fde8e7; color:var(--vermelho);}
+  .chip.vazio{background:#eef1f0; color:var(--cinza);}
+  .mini{border:none; background:none; font-size:1rem; padding:4px; color:var(--cinza);}
+  .add-btn{width:100%; padding:14px; font-size:1rem; font-weight:600; color:var(--verde-esc); background:#e2f5ea; border:2px dashed var(--verde); border-radius:14px; margin-top:10px;}
+  textarea#avulsos{width:100%; min-height:84px; padding:12px; font-size:1rem; border:1.5px solid var(--linha); border-radius:14px; background:var(--carta); resize:vertical;}
+  .rodape{position:fixed; bottom:0; left:0; right:0; background:#fff; border-top:1px solid var(--linha); padding:10px 12px calc(10px + env(safe-area-inset-bottom)); display:flex; gap:8px; z-index:6;}
+  .botao{flex:1; padding:15px 8px; font-size:1rem; font-weight:700; border:none; border-radius:12px;}
+  .botao.principal{background:var(--verde); color:#fff;}
+  .botao.fantasma{background:#eef1f0; color:var(--tinta); flex:0 0 auto; padding:15px 14px;}
+  /* modal */
+  .veu{position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; z-index:10; align-items:flex-end;}
+  .veu.aberto{display:flex;}
+  .modal{background:#fff; width:100%; border-radius:18px 18px 0 0; padding:18px 16px calc(18px + env(safe-area-inset-bottom)); max-width:560px; margin:0 auto;}
+  .modal h2{margin:0 0 12px; font-size:1.05rem;}
+  .modal label{display:block; font-size:.8rem; font-weight:600; color:var(--cinza); margin:10px 2px 4px;}
+  .modal input, .modal select{width:100%; padding:12px; font-size:1rem; border:1.5px solid var(--linha); border-radius:10px; background:#fafcfb;}
+  .modal .linha2{display:flex; gap:8px;}
+  .modal .linha2 > div{flex:1;}
+  .modal .acoes{display:flex; gap:8px; margin-top:16px;}
+  .aviso{font-size:.78rem; color:var(--cinza); text-align:center; margin:14px 0 4px;}
+  #resultado{white-space:pre-wrap; background:#12281e; color:#d9f5e6; font-family:ui-monospace,Consolas,monospace; font-size:.86rem; padding:14px; border-radius:14px; display:none; margin-top:10px;}
+  .toast{position:fixed; left:50%; transform:translateX(-50%); bottom:120px; background:var(--tinta); color:#fff; padding:10px 18px; border-radius:99px; font-size:.85rem; opacity:0; transition:opacity .25s; pointer-events:none; z-index:20;}
+  .toast.mostra{opacity:.95;}
+</style>
+</head>
+<body>
+<header>
+  <h1>🛒 TDS — Todo Santo Dia</h1>
+  <div class="sub" id="dataHoje"></div>
+</header>
+
+<main>
+  <div class="secao-titulo">Ronda do estoque <span id="contagem"></span></div>
+  <div id="listaItens"></div>
+  <button class="add-btn" onclick="abrirModal()">＋ Adicionar item ao inventário</button>
+
+  <div class="secao-titulo">Pedidos avulsos do dia (um por linha)</div>
+  <textarea id="avulsos" placeholder="Ex.:&#10;papel toalha 2 fardos&#10;detergente 6 un" oninput="salvarDia()"></textarea>
+
+  <div id="resultado"></div>
+  <p class="aviso">TDS v1 — feito por Thomas &amp; Claude · funciona offline · dados ficam só neste celular</p>
+</main>
+
+<div class="rodape">
+  <button class="botao fantasma" onclick="zerarRonda()" title="Limpar contagens de hoje">🔄</button>
+  <button class="botao principal" onclick="gerarLista()">GERAR LISTA DA MANHÃ</button>
+  <button class="botao fantasma" onclick="compartilhar()" title="Mandar no WhatsApp">📲</button>
+</div>
+
+<!-- modal de item -->
+<div class="veu" id="veu" onclick="if(event.target===this)fecharModal()">
+  <div class="modal">
+    <h2 id="tituloModal">Novo item</h2>
+    <label>Nome do item</label>
+    <input id="mNome" placeholder="Ex.: Arroz">
+    <div class="linha2">
+      <div>
+        <label>Unidade</label>
+        <select id="mUnidade">
+          <option>kg</option><option>un</option><option>L</option>
+          <option>pacote</option><option>lata</option><option>caixa</option>
+          <option>fardo</option><option>maço</option><option>dúzia</option>
+        </select>
+      </div>
+      <div>
+        <label>Seção do mercado</label>
+        <select id="mSecao">
+          <option>Mercearia</option><option>Açougue</option><option>Hortifruti</option>
+          <option>Frios/Laticínios</option><option>Bebidas</option><option>Limpeza</option><option>Outros</option>
+        </select>
+      </div>
+    </div>
+    <div class="linha2">
+      <div>
+        <label>Mínimo (abaixo disso, compra)</label>
+        <input id="mMinimo" inputmode="decimal" placeholder="Ex.: 10">
+      </div>
+      <div>
+        <label>Tem agora (opcional)</label>
+        <input id="mTem" inputmode="decimal" placeholder="Ex.: 6,5">
+      </div>
+    </div>
+    <div class="acoes">
+      <button class="botao fantasma" style="flex:1" onclick="fecharModal()">Cancelar</button>
+      <button class="botao principal" style="flex:2" onclick="salvarItem()">Salvar item</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ============ TDS v1 — Todo Santo Dia ============
+// Catálogo de itens: localStorage 'tds_itens'
+// Ronda do dia:      localStorage 'tds_dia_AAAA-MM-DD'
+// =================================================
+var editandoId = null;
+
+function hojeChave(){
+  var d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+}
+function dataBonita(){
+  var dias = ["domingo","segunda","terça","quarta","quinta","sexta","sábado"];
+  var d = new Date();
+  return dias[d.getDay()] + ", " + String(d.getDate()).padStart(2,"0") + "/" + String(d.getMonth()+1).padStart(2,"0") + "/" + d.getFullYear();
+}
+function lerNumero(txt){
+  if(txt === null || txt === undefined) return NaN;
+  txt = String(txt).trim().replace(",", ".");
+  if(txt === "") return NaN;
+  var n = parseFloat(txt);
+  return isNaN(n) ? NaN : n;
+}
+function fmt(n){
+  return (Math.round(n*100)/100).toString().replace(".", ",");
+}
+function carregarItens(){
+  try{ return JSON.parse(localStorage.getItem("tds_itens")) || []; }catch(e){ return []; }
+}
+function guardarItens(itens){
+  try{ localStorage.setItem("tds_itens", JSON.stringify(itens)); }catch(e){}
+}
+function carregarDia(){
+  try{ return JSON.parse(localStorage.getItem("tds_dia_" + hojeChave())) || {tem:{}, avulsos:""}; }catch(e){ return {tem:{}, avulsos:""}; }
+}
+function guardarDia(dia){
+  try{ localStorage.setItem("tds_dia_" + hojeChave(), JSON.stringify(dia)); }catch(e){}
+}
+
+// ---------- desenhar a ronda ----------
+function desenhar(){
+  var itens = carregarItens();
+  var dia = carregarDia();
+  var caixa = document.getElementById("listaItens");
+  caixa.innerHTML = "";
+  document.getElementById("dataHoje").textContent = dataBonita();
+  document.getElementById("avulsos").value = dia.avulsos || "";
+
+  if(itens.length === 0){
+    caixa.innerHTML = '<div class="card" style="justify-content:center; color:var(--cinza); font-size:.9rem;">Inventário vazio — começa adicionando teus itens críticos no botão aí embaixo. 👇</div>';
+  }
+
+  // ordena por seção e nome
+  itens.sort(function(a,b){
+    if(a.secao !== b.secao) return a.secao < b.secao ? -1 : 1;
+    return a.nome.toLowerCase() < b.nome.toLowerCase() ? -1 : 1;
+  });
+
+  var secaoAtual = null;
+  itens.forEach(function(item){
+    if(item.secao !== secaoAtual){
+      secaoAtual = item.secao;
+      var t = document.createElement("div");
+      t.className = "secao-titulo";
+      t.textContent = secaoAtual;
+      caixa.appendChild(t);
+    }
+    var temValor = dia.tem[item.id];
+    var temNum = lerNumero(temValor);
+    var chip, chipClasse;
+    if(isNaN(temNum)){ chip = "—"; chipClasse = "vazio"; }
+    else if(temNum >= item.minimo){ chip = "OK"; chipClasse = "ok"; }
+    else { chip = "COMPRAR"; chipClasse = "comprar"; }
+
+    var card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML =
+      '<div class="info">' +
+        '<div class="nome">' + escapa(item.nome) + ' <span class="chip ' + chipClasse + '">' + chip + '</span></div>' +
+        '<div class="meta">mínimo: ' + fmt(item.minimo) + ' ' + escapa(item.unidade) + '</div>' +
+      '</div>' +
+      '<input class="tem" inputmode="decimal" placeholder="tem?" value="' + (temValor !== undefined ? escapa(String(temValor)) : "") + '" ' +
+        'onchange="anotarTem(\'' + item.id + '\', this.value)">' +
+      '<button class="mini" onclick="editarItem(\'' + item.id + '\')">✏️</button>' +
+      '<button class="mini" onclick="apagarItem(\'' + item.id + '\')">🗑</button>';
+    caixa.appendChild(card);
+  });
+
+  var pendentes = itens.filter(function(i){ return isNaN(lerNumero(dia.tem[i.id])); }).length;
+  document.getElementById("contagem").textContent =
+    itens.length ? "· " + itens.length + " itens" + (pendentes ? " (" + pendentes + " sem contagem)" : " ✓") : "";
+}
+function escapa(s){
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+
+// ---------- ações da ronda ----------
+function anotarTem(id, valor){
+  var dia = carregarDia();
+  dia.tem[id] = valor;
+  guardarDia(dia);
+  desenhar();
+}
+function salvarDia(){
+  var dia = carregarDia();
+  dia.avulsos = document.getElementById("avulsos").value;
+  guardarDia(dia);
+}
+function zerarRonda(){
+  if(!confirm("Limpar as contagens de HOJE? (o inventário fica)")) return;
+  guardarDia({tem:{}, avulsos: carregarDia().avulsos});
+  desenhar();
+  aviso("Ronda de hoje zerada");
+}
+
+// ---------- inventário (adicionar / editar / apagar) ----------
+function abrirModal(){
+  editandoId = null;
+  document.getElementById("tituloModal").textContent = "Novo item";
+  document.getElementById("mNome").value = "";
+  document.getElementById("mMinimo").value = "";
+  document.getElementById("mTem").value = "";
+  document.getElementById("veu").classList.add("aberto");
+  setTimeout(function(){ document.getElementById("mNome").focus(); }, 100);
+}
+function editarItem(id){
+  var item = carregarItens().find(function(i){ return i.id === id; });
+  if(!item) return;
+  editandoId = id;
+  document.getElementById("tituloModal").textContent = "Editar item";
+  document.getElementById("mNome").value = item.nome;
+  document.getElementById("mUnidade").value = item.unidade;
+  document.getElementById("mSecao").value = item.secao;
+  document.getElementById("mMinimo").value = fmt(item.minimo);
+  document.getElementById("mTem").value = "";
+  document.getElementById("veu").classList.add("aberto");
+}
+function fecharModal(){
+  document.getElementById("veu").classList.remove("aberto");
+}
+function salvarItem(){
+  var nome = document.getElementById("mNome").value.trim();
+  var minimo = lerNumero(document.getElementById("mMinimo").value);
+  if(!nome){ aviso("Falta o nome do item"); return; }
+  if(isNaN(minimo)){ aviso("Falta o mínimo (número)"); return; }
+
+  var itens = carregarItens();
+  var temAgora = document.getElementById("mTem").value;
+
+  if(editandoId){
+    var item = itens.find(function(i){ return i.id === editandoId; });
+    if(item){
+      item.nome = nome;
+      item.unidade = document.getElementById("mUnidade").value;
+      item.secao = document.getElementById("mSecao").value;
+      item.minimo = minimo;
+    }
+  } else {
+    var novo = {
+      id: "i" + Date.now() + Math.floor(Math.random()*1000),
+      nome: nome,
+      unidade: document.getElementById("mUnidade").value,
+      secao: document.getElementById("mSecao").value,
+      minimo: minimo
+    };
+    itens.push(novo);
+    if(String(temAgora).trim() !== ""){
+      var dia = carregarDia();
+      dia.tem[novo.id] = temAgora;
+      guardarDia(dia);
+    }
+  }
+  guardarItens(itens);
+  fecharModal();
+  desenhar();
+  aviso(editandoId ? "Item atualizado" : "Item adicionado ✓");
+}
+function apagarItem(id){
+  var item = carregarItens().find(function(i){ return i.id === id; });
+  if(!item) return;
+  if(!confirm("Apagar \"" + item.nome + "\" do inventário?")) return;
+  guardarItens(carregarItens().filter(function(i){ return i.id !== id; }));
+  desenhar();
+}
+
+// ---------- a lista da manhã ----------
+function montarTexto(){
+  var itens = carregarItens();
+  var dia = carregarDia();
+  var porSecao = {};
+  var totalItens = 0;
+
+  itens.forEach(function(item){
+    var temNum = lerNumero(dia.tem[item.id]);
+    if(isNaN(temNum)) return;                 // sem contagem, sem palpite
+    var falta = item.minimo - temNum;
+    if(falta <= 0) return;                    // estoque cobre — regra do "nunca compra negativo"
+    if(!porSecao[item.secao]) porSecao[item.secao] = [];
+    porSecao[item.secao].push("• " + item.nome + " — " + fmt(falta) + " " + item.unidade);
+    totalItens++;
+  });
+
+  var linhas = [];
+  linhas.push("🛒 LISTA DA MANHÃ — " + dataBonita());
+  linhas.push("");
+  Object.keys(porSecao).sort().forEach(function(secao){
+    linhas.push("▪ " + secao.toUpperCase());
+    porSecao[secao].forEach(function(l){ linhas.push(l); });
+    linhas.push("");
+  });
+
+  var avulsos = (dia.avulsos || "").split("\n").map(function(l){ return l.trim(); }).filter(Boolean);
+  if(avulsos.length){
+    linhas.push("▪ PEDIDOS AVULSOS");
+    avulsos.forEach(function(l){ linhas.push("• " + l); });
+    linhas.push("");
+    totalItens += avulsos.length;
+  }
+
+  var semContagem = itens.filter(function(i){ return isNaN(lerNumero(dia.tem[i.id])); }).length;
+  if(totalItens === 0){
+    linhas.push("(nada pra comprar — estoque cobre tudo" + (semContagem ? ", mas " + semContagem + " itens estão SEM contagem hoje ⚠" : " ✓") + ")");
+  } else {
+    linhas.push("Total: " + totalItens + " itens" + (semContagem ? " · ⚠ " + semContagem + " sem contagem hoje" : ""));
+  }
+  linhas.push("— TDS · Todo Santo Dia");
+  return linhas.join("\n");
+}
+function gerarLista(){
+  var texto = montarTexto();
+  var caixa = document.getElementById("resultado");
+  caixa.textContent = texto;
+  caixa.style.display = "block";
+  caixa.scrollIntoView({behavior:"smooth", block:"center"});
+  copiar(texto, true);
+}
+function copiar(texto, silencioso){
+  function fallback(){
+    var ta = document.createElement("textarea");
+    ta.value = texto; document.body.appendChild(ta);
+    ta.select(); try{ document.execCommand("copy"); }catch(e){}
+    document.body.removeChild(ta);
+  }
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(texto).catch(fallback);
+  } else { fallback(); }
+  aviso("Lista gerada e copiada 📋");
+}
+function compartilhar(){
+  var texto = montarTexto();
+  window.open("https://wa.me/?text=" + encodeURIComponent(texto), "_blank");
+}
+function aviso(msg){
+  var t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("mostra");
+  setTimeout(function(){ t.classList.remove("mostra"); }, 1800);
+}
+
+desenhar();
+</script>
+</body>
+</html>
