@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>TDS — Todo Santo Dia</title>
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="apple-touch-icon.png">
 <style>
   :root{
     --verde:#1e9e5a; --verde-esc:#157a44; --vermelho:#d64541; --laranja:#e8862d;
@@ -365,7 +367,13 @@ function copiar(texto, silencioso){
 }
 function compartilhar(){
   var texto = montarTexto();
-  window.open("https://wa.me/?text=" + encodeURIComponent(texto), "_blank");
+  if(navigator.share){
+    // Central de compartilhamento nativa (iOS/Android): WhatsApp, Notas, etc.
+    navigator.share({text: texto}).catch(function(){ /* usuario cancelou, tudo bem */ });
+  } else {
+    // Fallback: abre o WhatsApp direto
+    location.href = "https://wa.me/?text=" + encodeURIComponent(texto);
+  }
 }
 function aviso(msg){
   var t = document.getElementById("toast");
