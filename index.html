@@ -63,13 +63,14 @@
   <div class="secao-titulo">Ronda do estoque <span id="contagem"></span></div>
   <div id="listaItens"></div>
   <button class="add-btn" onclick="abrirModal()">＋ Adicionar item ao inventário</button>
+  <button class="add-btn" style="color:#1c5f8a; background:#e4f0f8; border-color:#3a86b8;" onclick="abrirImport()">📥 Importar nota (entrada de estoque)</button>
 
   <div class="secao-titulo">Pedidos avulsos do dia (um por linha)</div>
   <textarea id="avulsos" placeholder="Ex.:&#10;papel toalha 2 fardos&#10;detergente 6 un" oninput="salvarDia()"></textarea>
 
   <div id="resultado"></div>
   <button class="link-outras" id="btnOutras" style="display:none" onclick="outrasOpcoes()">📤 compartilhar de outro jeito</button>
-  <p class="aviso">TDS <b>v1.2</b> — feito por Thomas &amp; Claude · funciona offline · dados ficam só neste celular</p>
+  <p class="aviso">TDS <b>v1.3</b> — feito por Thomas &amp; Claude · funciona offline · dados ficam só neste celular</p>
 </main>
 
 <div class="rodape">
@@ -114,6 +115,30 @@
     <div class="acoes">
       <button class="botao fantasma" style="flex:1" onclick="fecharModal()">Cancelar</button>
       <button class="botao principal" style="flex:2" onclick="salvarItem()">Salvar item</button>
+    </div>
+  </div>
+</div>
+
+<!-- modal de importação de nota -->
+<div class="veu" id="veuImport" onclick="if(event.target===this)fecharImport()">
+  <div class="modal">
+    <h2>📥 Importar nota</h2>
+    <p style="font-size:.82rem; color:var(--cinza); margin:0 0 10px; line-height:1.45;">
+      Cole abaixo a lista da nota (uma linha por item).<br>
+      Formato: <b>nome | quantidade | unidade | preço | seção</b><br>
+      Preço e seção são opcionais. Ex.:<br>
+      <code style="font-size:.78rem;">Arroz | 30 | kg | 5,90 | Mercearia</code>
+    </p>
+    <textarea id="txtImport" style="width:100%; min-height:150px; padding:12px; font-size:.95rem;
+      border:1.5px solid var(--linha); border-radius:12px; background:#fafcfb; font-family:ui-monospace,Consolas,monospace;"
+      placeholder="Arroz | 30 | kg | 5,90 | Mercearia&#10;Frango | 12 | kg | 18,00 | Açougue&#10;Detergente | 6 | un | 2,50 | Limpeza"></textarea>
+    <p style="font-size:.78rem; color:var(--cinza); margin:8px 2px 0;">
+      Item que já existe: soma a quantidade na contagem de hoje e atualiza o preço.<br>
+      Item novo: entra no inventário (mínimo pode ser ajustado depois).
+    </p>
+    <div class="acoes">
+      <button class="botao fantasma" style="flex:1" onclick="fecharImport()">Cancelar</button>
+      <button class="botao principal" style="flex:2" onclick="importarNota()">Importar</button>
     </div>
   </div>
 </div>
@@ -199,7 +224,8 @@ function desenhar(){
     card.innerHTML =
       '<div class="info">' +
         '<div class="nome">' + escapa(item.nome) + ' <span class="chip ' + chipClasse + '">' + chip + '</span></div>' +
-        '<div class="meta">mínimo: ' + fmt(item.minimo) + ' ' + escapa(item.unidade) + '</div>' +
+        '<div class="meta">mínimo: ' + fmt(item.minimo) + ' ' + escapa(item.unidade) +
+          (item.preco ? ' · R$ ' + fmt(item.preco) + '/' + escapa(item.unidade) : '') + '</div>' +
       '</div>' +
       '<input class="tem" inputmode="decimal" placeholder="tem?" value="' + (temValor !== undefined ? escapa(String(temValor)) : "") + '" ' +
         'onchange="anotarTem(\'' + item.id + '\', this.value)">' +
@@ -305,12 +331,78 @@ function apagarItem(id){
   desenhar();
 }
 
+// ---------- importar nota (entrada de estoque) ----------
+function abrirImport(){
+  document.getElementById("txtImport").value = "";
+  document.getElementById("veuImport").classList.add("aberto");
+}
+function fecharImport(){
+  document.getElementById("veuImport").classList.remove("aberto");
+}
+function normaliza(s){
+  return String(s).trim().toLowerCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+function importarNota(){
+  var bruto = document.getElementById("txtImport").value || "";
+  var linhas = bruto.split("\n").map(function(l){ return l.trim(); }).filter(Boolean);
+  if(!linhas.length){ aviso("Cole a lista da nota primeiro"); return; }
+
+  var itens = carregarItens();
+  var dia = carregarDia();
+  var criados = 0, atualizados = 0, ignorados = 0;
+
+  linhas.forEach(function(linha){
+    // aceita |  ;  ou tab como separador
+    var campos = linha.split(/\s*[|;\t]\s*/);
+    var nome = (campos[0] || "").trim();
+    var qtd  = lerNumero(campos[1]);
+    if(!nome || isNaN(qtd)){ ignorados++; return; }
+
+    var unidade = (campos[2] || "").trim() || "un";
+    var preco   = lerNumero(campos[3]);
+    var secao   = (campos[4] || "").trim() || "Outros";
+
+    var existente = itens.find(function(i){ return normaliza(i.nome) === normaliza(nome); });
+
+    if(existente){
+      var atual = lerNumero(dia.tem[existente.id]);
+      dia.tem[existente.id] = (isNaN(atual) ? qtd : atual + qtd);
+      if(!isNaN(preco)) existente.preco = preco;
+      atualizados++;
+    } else {
+      var novo = {
+        id: "i" + Date.now() + Math.floor(Math.random()*10000),
+        nome: nome,
+        unidade: unidade,
+        secao: secao,
+        minimo: 0
+      };
+      if(!isNaN(preco)) novo.preco = preco;
+      itens.push(novo);
+      dia.tem[novo.id] = qtd;
+      criados++;
+    }
+  });
+
+  guardarItens(itens);
+  guardarDia(dia);
+  fecharImport();
+  desenhar();
+
+  var msg = criados + " novo(s), " + atualizados + " atualizado(s)";
+  if(ignorados) msg += ", " + ignorados + " linha(s) ignorada(s)";
+  aviso("Nota importada: " + msg);
+}
+
 // ---------- a lista da manhã ----------
 function montarTexto(){
   var itens = carregarItens();
   var dia = carregarDia();
   var porSecao = {};
   var totalItens = 0;
+  var custoEstimado = 0;
+  var temPreco = false;
 
   itens.forEach(function(item){
     var temNum = lerNumero(dia.tem[item.id]);
@@ -318,7 +410,13 @@ function montarTexto(){
     var falta = item.minimo - temNum;
     if(falta <= 0) return;                    // estoque cobre — regra do "nunca compra negativo"
     if(!porSecao[item.secao]) porSecao[item.secao] = [];
-    porSecao[item.secao].push("• " + item.nome + " — " + fmt(falta) + " " + item.unidade);
+    var linha = "• " + item.nome + " — " + fmt(falta) + " " + item.unidade;
+    if(item.preco){
+      custoEstimado += falta * item.preco;
+      temPreco = true;
+      linha += "  (~R$ " + fmt(falta * item.preco) + ")";
+    }
+    porSecao[item.secao].push(linha);
     totalItens++;
   });
 
@@ -344,6 +442,7 @@ function montarTexto(){
     linhas.push("(nada pra comprar — estoque cobre tudo" + (semContagem ? ", mas " + semContagem + " itens estão SEM contagem hoje ⚠" : " ✓") + ")");
   } else {
     linhas.push("Total: " + totalItens + " itens" + (semContagem ? " · ⚠ " + semContagem + " sem contagem hoje" : ""));
+    if(temPreco) linhas.push("Custo estimado: ~R$ " + fmt(custoEstimado) + " (só dos itens com preço)");
   }
   linhas.push("— TDS · Todo Santo Dia");
   return linhas.join("\n");
