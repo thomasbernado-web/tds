@@ -35,6 +35,8 @@
   .botao{flex:1; padding:15px 8px; font-size:1rem; font-weight:700; border:none; border-radius:12px;}
   .botao.principal{background:var(--verde); color:#fff;}
   .botao.fantasma{background:#eef1f0; color:var(--tinta); flex:0 0 auto; padding:15px 14px;}
+  .botao.zap{background:#25D366; color:#fff; flex:1.1;}
+  .link-outras{display:block; width:100%; text-align:center; background:none; border:none; color:var(--cinza); font-size:.82rem; padding:10px; text-decoration:underline;}
   /* modal */
   .veu{position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; z-index:10; align-items:flex-end;}
   .veu.aberto{display:flex;}
@@ -66,13 +68,14 @@
   <textarea id="avulsos" placeholder="Ex.:&#10;papel toalha 2 fardos&#10;detergente 6 un" oninput="salvarDia()"></textarea>
 
   <div id="resultado"></div>
-  <p class="aviso">TDS <b>v1.1</b> — feito por Thomas &amp; Claude · funciona offline · dados ficam só neste celular</p>
+  <button class="link-outras" id="btnOutras" style="display:none" onclick="outrasOpcoes()">📤 compartilhar de outro jeito</button>
+  <p class="aviso">TDS <b>v1.2</b> — feito por Thomas &amp; Claude · funciona offline · dados ficam só neste celular</p>
 </main>
 
 <div class="rodape">
   <button class="botao fantasma" onclick="zerarRonda()" title="Limpar contagens de hoje">🔄</button>
-  <button class="botao principal" onclick="gerarLista()">GERAR LISTA DA MANHÃ</button>
-  <button class="botao fantasma" onclick="compartilhar()" title="Mandar no WhatsApp">📲</button>
+  <button class="botao principal" onclick="gerarLista()">GERAR LISTA</button>
+  <button class="botao zap" onclick="compartilhar()" title="Mandar no WhatsApp">📲 WhatsApp</button>
 </div>
 
 <!-- modal de item -->
@@ -350,6 +353,7 @@ function gerarLista(){
   var caixa = document.getElementById("resultado");
   caixa.textContent = texto;
   caixa.style.display = "block";
+  document.getElementById("btnOutras").style.display = "block";
   caixa.scrollIntoView({behavior:"smooth", block:"center"});
   copiar(texto, true);
 }
@@ -366,13 +370,17 @@ function copiar(texto, silencioso){
   aviso("Lista gerada e copiada 📋");
 }
 function compartilhar(){
+  // Vai DIRETO pra tela "Enviar para" do WhatsApp, com a lista pronta.
+  var texto = montarTexto();
+  location.href = "https://wa.me/?text=" + encodeURIComponent(texto);
+}
+function outrasOpcoes(){
+  // Plano B: gaveta nativa do celular (Notas, e-mail, AirDrop...)
   var texto = montarTexto();
   if(navigator.share){
-    // Central de compartilhamento nativa (iOS/Android): WhatsApp, Notas, etc.
-    navigator.share({text: texto}).catch(function(){ /* usuario cancelou, tudo bem */ });
+    navigator.share({text: texto}).catch(function(){});
   } else {
-    // Fallback: abre o WhatsApp direto
-    location.href = "https://wa.me/?text=" + encodeURIComponent(texto);
+    copiar(texto);
   }
 }
 function aviso(msg){
