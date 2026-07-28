@@ -70,13 +70,14 @@
   <div id="listaItens"></div>
   <button class="add-btn" onclick="abrirModal()">＋ Adicionar item ao inventário</button>
   <button class="add-btn" style="color:#1c5f8a; background:#e4f0f8; border-color:#3a86b8;" onclick="abrirImport()">📥 Importar nota (entrada de estoque)</button>
+  <button class="add-btn" style="color:#7a4b12; background:#fcf0dd; border-color:#e8862d;" onclick="abrirFoto()">📷 Preparar foto da nota</button>
 
   <div class="secao-titulo">Pedidos avulsos do dia (um por linha)</div>
   <textarea id="avulsos" placeholder="Ex.:&#10;papel toalha 2 fardos&#10;detergente 6 un" oninput="salvarDia()"></textarea>
 
   <div id="resultado"></div>
   <button class="link-outras" id="btnOutras" style="display:none" onclick="outrasOpcoes()">📤 compartilhar de outro jeito</button>
-  <p class="aviso">TDS <b>v1.3</b> — feito por Thomas &amp; Claude · funciona offline · dados ficam só neste celular</p>
+  <p class="aviso">TDS <b>v1.4</b> — feito por Thomas &amp; Claude · funciona offline · dados ficam só neste celular</p>
 </main>
 
 <div class="rodape">
@@ -121,6 +122,37 @@
     <div class="acoes">
       <button class="botao fantasma" style="flex:1" onclick="fecharModal()">Cancelar</button>
       <button class="botao principal" style="flex:2" onclick="salvarItem()">Salvar item</button>
+    </div>
+  </div>
+</div>
+
+<!-- modal de preparo de foto -->
+<div class="veu" id="veuFoto" onclick="if(event.target===this)fecharFoto()">
+  <div class="modal" style="max-height:92vh; overflow-y:auto;">
+    <h2>📷 Preparar foto da nota</h2>
+    <p style="font-size:.82rem; color:var(--cinza); margin:0 0 10px; line-height:1.45;">
+      Fotografe a nota. O app limpa e realça o texto pra facilitar a leitura.<br>
+      Depois toque em <b>Compartilhar</b> e mande pro Claude ler.
+    </p>
+
+    <input type="file" id="arqFoto" accept="image/*" capture="environment"
+           style="width:100%; padding:12px; border:1.5px dashed var(--linha); border-radius:12px; background:#fafcfb;"
+           onchange="tratarFoto(this)">
+
+    <div id="areaFoto" style="display:none; margin-top:12px;">
+      <div style="display:flex; gap:6px; margin-bottom:8px;">
+        <button class="botao fantasma" style="flex:1; padding:10px; font-size:.85rem;" onclick="setModo('limiar')">Preto e branco</button>
+        <button class="botao fantasma" style="flex:1; padding:10px; font-size:.85rem;" onclick="setModo('cinza')">Cinza realçado</button>
+      </div>
+      <canvas id="cvFoto" style="width:100%; border:1px solid var(--linha); border-radius:12px; background:#fff;"></canvas>
+      <div style="display:flex; gap:6px; margin-top:8px;">
+        <button class="botao zap" style="flex:2" onclick="compartilharFoto()">📲 Compartilhar</button>
+        <button class="botao fantasma" style="flex:1" onclick="baixarFoto()">💾 Salvar</button>
+      </div>
+    </div>
+
+    <div class="acoes">
+      <button class="botao fantasma" style="flex:1" onclick="fecharFoto()">Fechar</button>
     </div>
   </div>
 </div>
@@ -335,6 +367,195 @@ function apagarItem(id){
   if(!confirm("Apagar \"" + item.nome + "\" do inventário?")) return;
   guardarItens(carregarItens().filter(function(i){ return i.id !== id; }));
   desenhar();
+}
+
+// ---------- preparo de foto (realce pra leitura) ----------
+var fotoCinza = null;      // Uint8ClampedArray em tons de cinza (já realçado)
+var fotoW = 0, fotoH = 0;
+var modoFoto = "limiar";
+
+function abrirFoto(){
+  document.getElementById("areaFoto").style.display = "none";
+  document.getElementById("arqFoto").value = "";
+  document.getElementById("veuFoto").classList.add("aberto");
+}
+function fecharFoto(){
+  document.getElementById("veuFoto").classList.remove("aberto");
+}
+
+function tratarFoto(input){
+  var f = input.files && input.files[0];
+  if(!f) return;
+  aviso("Processando a foto...");
+  var img = new Image();
+  img.onload = function(){
+    // 1) reduz se for gigante (celular tira 12MP; 1800px basta e é rápido)
+    var lado = 1800;
+    var esc = Math.min(1, lado / Math.max(img.width, img.height));
+    fotoW = Math.round(img.width * esc);
+    fotoH = Math.round(img.height * esc);
+
+    var cv = document.getElementById("cvFoto");
+    cv.width = fotoW; cv.height = fotoH;
+    var ctx = cv.getContext("2d");
+    ctx.drawImage(img, 0, 0, fotoW, fotoH);
+
+    var dados = ctx.getImageData(0, 0, fotoW, fotoH);
+    var px = dados.data;
+
+    // 2) tons de cinza (luminância)
+    var cinza = new Float32Array(fotoW * fotoH);
+    for(var i = 0, j = 0; i < px.length; i += 4, j++){
+      cinza[j] = 0.299*px[i] + 0.587*px[i+1] + 0.114*px[i+2];
+    }
+
+    // 3) alonga o contraste ignorando 2% das pontas (tira o "lavado" da foto)
+    var hist = new Uint32Array(256);
+    for(var k = 0; k < cinza.length; k++) hist[cinza[k] | 0]++;
+    var total = cinza.length, corte = total * 0.02, acc = 0, lo = 0, hi = 255;
+    for(var v = 0; v < 256; v++){ acc += hist[v]; if(acc > corte){ lo = v; break; } }
+    acc = 0;
+    for(var v2 = 255; v2 >= 0; v2--){ acc += hist[v2]; if(acc > corte){ hi = v2; break; } }
+    if(hi <= lo){ lo = 0; hi = 255; }
+    var faixa = hi - lo;
+    for(var k2 = 0; k2 < cinza.length; k2++){
+      var val = (cinza[k2] - lo) * 255 / faixa;
+      cinza[k2] = val < 0 ? 0 : (val > 255 ? 255 : val);
+    }
+
+    fotoCinza = cinza;
+    desenharFoto();
+    document.getElementById("areaFoto").style.display = "block";
+    aviso("Foto tratada ✓");
+  };
+  img.onerror = function(){ aviso("Não consegui abrir essa imagem"); };
+  img.src = URL.createObjectURL(f);
+}
+
+function suavizar(cinza, w, h){
+  // média 3x3: mata o granulado da câmera antes de decidir o que é tinta
+  var out = new Float32Array(cinza.length);
+  for(var y = 0; y < h; y++){
+    for(var x = 0; x < w; x++){
+      var soma = 0, n = 0;
+      for(var dy = -1; dy <= 1; dy++){
+        var yy = y + dy; if(yy < 0 || yy >= h) continue;
+        for(var dx = -1; dx <= 1; dx++){
+          var xx = x + dx; if(xx < 0 || xx >= w) continue;
+          soma += cinza[yy*w + xx]; n++;
+        }
+      }
+      out[y*w + x] = soma / n;
+    }
+  }
+  return out;
+}
+
+function limiarAdaptativo(cinzaBruto, w, h){
+  var cinza = suavizar(cinzaBruto, w, h);
+  // Método de Bradley: compara cada pixel com a média da vizinhança.
+  // Usa imagem integral, então é rápido mesmo em foto grande.
+  var W = w + 1;
+  var integral = new Float64Array(W * (h+1));
+  var integral2 = new Float64Array(W * (h+1));   // soma dos quadrados → desvio local
+  for(var y = 0; y < h; y++){
+    var soma = 0, soma_q = 0;
+    for(var x = 0; x < w; x++){
+      var g = cinza[y*w + x];
+      soma += g; soma_q += g*g;
+      integral[(y+1)*W + (x+1)]  = integral[y*W + (x+1)] + soma;
+      integral2[(y+1)*W + (x+1)] = integral2[y*W + (x+1)] + soma_q;
+    }
+  }
+  var s = Math.max(8, (w / 12) | 0);   // janela ~1/12 da largura
+  var t = 0.86;                        // abaixo de 86% da média local = tinta
+  var contraste_min = 18;              // desvio abaixo disso = papel liso, sem texto
+  var saida = new Uint8Array(w * h);
+  for(var y2 = 0; y2 < h; y2++){
+    var y1 = Math.max(0, y2 - s), y3 = Math.min(h-1, y2 + s);
+    for(var x2 = 0; x2 < w; x2++){
+      var x1 = Math.max(0, x2 - s), x3 = Math.min(w-1, x2 + s);
+      var conta = (x3-x1+1) * (y3-y1+1);
+      var A = y1*W + x1, B = y1*W + (x3+1), C = (y3+1)*W + x1, D = (y3+1)*W + (x3+1);
+      var soma2 = integral[D] - integral[B] - integral[C] + integral[A];
+      var somaq = integral2[D] - integral2[B] - integral2[C] + integral2[A];
+      var media = soma2 / conta;
+      var varia = somaq / conta - media * media;
+      // área lisa (sem contraste) = fundo. Não inventa tinta onde não tem.
+      if(varia < contraste_min * contraste_min){
+        saida[y2*w + x2] = 255;
+        continue;
+      }
+      saida[y2*w + x2] = (cinza[y2*w + x2] < media * t) ? 0 : 255;
+    }
+  }
+  return saida;
+}
+
+function tiraPoeira(bin, w, h){
+  // mediana 3x3: remove pontinhos soltos sem comer a letra
+  var out = new Uint8Array(bin);
+  for(var y = 1; y < h-1; y++){
+    for(var x = 1; x < w-1; x++){
+      var pretos = 0;
+      for(var dy = -1; dy <= 1; dy++)
+        for(var dx = -1; dx <= 1; dx++)
+          if(bin[(y+dy)*w + (x+dx)] === 0) pretos++;
+      out[y*w + x] = (pretos >= 5) ? 0 : 255;
+    }
+  }
+  return out;
+}
+
+function desenharFoto(){
+  if(!fotoCinza) return;
+  var cv = document.getElementById("cvFoto");
+  var ctx = cv.getContext("2d");
+  var dados = ctx.createImageData(fotoW, fotoH);
+  var px = dados.data;
+
+  var fonte;
+  if(modoFoto === "limiar"){
+    fonte = tiraPoeira(limiarAdaptativo(fotoCinza, fotoW, fotoH), fotoW, fotoH);
+  } else {
+    fonte = fotoCinza;
+  }
+  for(var i = 0, j = 0; j < fotoW*fotoH; i += 4, j++){
+    var v = fonte[j] | 0;
+    px[i] = px[i+1] = px[i+2] = v;
+    px[i+3] = 255;
+  }
+  ctx.putImageData(dados, 0, 0);
+}
+
+function setModo(m){
+  modoFoto = m;
+  aviso(m === "limiar" ? "Preto e branco" : "Cinza realçado");
+  desenharFoto();
+}
+
+function fotoBlob(cb){
+  document.getElementById("cvFoto").toBlob(function(b){ cb(b); }, "image/png");
+}
+function compartilharFoto(){
+  fotoBlob(function(b){
+    var arq = new File([b], "nota-tratada.png", {type: "image/png"});
+    if(navigator.canShare && navigator.canShare({files:[arq]}) && navigator.share){
+      navigator.share({files:[arq], title:"Nota tratada"}).catch(function(){});
+    } else {
+      baixarFoto();
+      aviso("Salvei a imagem — compartilhe pela galeria");
+    }
+  });
+}
+function baixarFoto(){
+  fotoBlob(function(b){
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(b);
+    a.download = "nota-tratada.png";
+    a.click();
+    aviso("Imagem salva 💾");
+  });
 }
 
 // ---------- importar nota (entrada de estoque) ----------
