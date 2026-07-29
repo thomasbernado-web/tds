@@ -77,7 +77,7 @@
 
   <div id="resultado"></div>
   <button class="link-outras" id="btnOutras" style="display:none" onclick="outrasOpcoes()">📤 compartilhar de outro jeito</button>
-  <p class="aviso">TDS <b>v1.7</b> — feito por Thomas &amp; Claude · funciona offline · dados ficam só neste celular</p>
+  <p class="aviso">TDS <b>v1.8</b> — feito por Thomas &amp; Claude · funciona offline · dados ficam só neste celular</p>
 </main>
 
 <div class="rodape">
@@ -646,46 +646,121 @@ function numerosDaLinha(linha){
   return achados.map(function(n){ return parseFloat(n.replace(",", ".")); });
 }
 
-function rascunhoDaNota(texto){
-  // Filosofia: o leitor acerta PALAVRA e erra NÚMERO.
-  // Então trazemos os nomes prontos e deixamos a quantidade em branco,
-  // pra pessoa preencher olhando a nota. Nunca chutamos número.
-  var LIXO = /(CNPJ|CPF|TEL|FONE|WHATS|RUA|AV\b|AVENIDA|CEP|INSCR|IE\b|CUPOM|FISCAL|NOTA|SAT|TOTAL|SUBTOTAL|TROCO|DINHEIRO|CARTAO|CARTÃO|PIX|DEBITO|DÉBITO|CREDITO|CRÉDITO|PAGTO|PAGAMENTO|ASSINATURA|CLIENTE|VENDEDOR|OPERADOR|CAIXA|ITEM\s+DESCRI|DESCRICAO|DESCRIÇÃO|QTD|VLR|VALOR|UNIT|OBRIGAD|VOLTE|SEMPRE|LTDA|ME\b|EPP|PRE-VENDA|PRÉ-VENDA|CONTROLE INTERNO|DATA|HORA)/i;
+function _numBR(s){ return parseFloat(String(s).replace(/\./g,"").replace(",",".")); }
+function _fmtBR(v){ return v.toFixed(2).replace(".", ","); }
 
-  var linhas = texto.split("\n").map(function(l){ return l.trim(); })
-                    .filter(function(l){ return l.length > 2; });
-  var nomes = [];
+var LIXO_NOTA = /(CNPJ|CPF|TEL|FONE|WHATS|RUA|AV\b|AVENIDA|CEP|INSCR|CUPOM|FISCAL|SAT|TOTAL|SUBTOTAL|TROCO|DINHEIRO|CART|PIX|DEBITO|CREDITO|PAGTO|PAGAMENTO|ASSINATURA|CLIENTE|CONSUMIDOR|VENDEDOR|OPERADOR|CAIXA|LTDA|EPP|PRE-VENDA|PRÉ-VENDA|CONTROLE INTERNO|OBRIGAD|VOLTE)/i;
+
+// acha "22,0000 = 22,00"  ou  "2  24,90  49,80"  (qtd x unitário = total)
+function acharNumeros(l){
+  var m = /([\d.]*\d,\d{2,4})\s*[=＝]\s*([\d.]*\d,\d{2})\s*$/.exec(l);
+  if(m) return { unit:_numBR(m[1]), tot:_numBR(m[2]), fim:m.index };
+  var toks=[], re=/\d[\d.]*,\d{2,4}|\d+(?:[.,]\d+)?/g, mm;
+  while((mm = re.exec(l)) !== null) toks.push({v:mm[0], i:mm.index});
+  if(toks.length >= 3){
+    var t = toks.slice(-3), a=_numBR(t[0].v), b=_numBR(t[1].v), c=_numBR(t[2].v);
+    if(a>0 && b>0 && c>0 && Math.abs(a*b-c) < 0.02) return { unit:b, tot:c, fim:t[0].i };
+  }
+  return null;
+}
+function limpaNome(s){
+  return s.replace(/^[^\wÀ-ÿ]+/,"").replace(/^\s*\d{1,7}\s*[-–—.\s]\s*/,"")
+          .replace(/[^\wÀ-ÿ\s\/\-%.]/g," ").replace(/\s{2,}/g," ").trim();
+}
+function pareceProduto(s){
+  var palavras = (s.match(/[A-Za-zÀ-ÿ]{4,}/g) || []).length;
+  var letras   = (s.match(/[A-Za-zÀ-ÿ]/g) || []).length;
+  return (palavras >= 1 || letras >= 8) && !LIXO_NOTA.test(s);
+}
+function unidadeDe(l){
+  if(/\bkgs?\b/i.test(l)) return "kg";
+  if(/\b(lt|litros?)\b/i.test(l)) return "l";
+  if(/\b(cx|caixas?)\b/i.test(l)) return "cx";
+  if(/\b(pct|pacotes?|fd|fardos?)\b/i.test(l)) return "pct";
+  return "un";
+}
+
+function lerNota(texto){
+  var linhas = texto.split("\n").map(function(l){return l.trim();})
+                    .filter(function(l){return l.length>1;});
+  var itens=[], pend=null, totalNota=null;
 
   linhas.forEach(function(l){
-    if(LIXO.test(l)) return;                       // cabeçalho, rodapé, pagamento
-    if(!/[A-Za-zÀ-ÿ]{3,}/.test(l)) return;         // linha só de números/traços
-
-    // tira sujeira e código do começo (". 009 ARROZ..." -> "ARROZ...")
-    var nome = l.replace(/^[^\wÀ-ÿ]+/, "").replace(/^\s*\d{1,5}[\s.\-]+/, "");
-    // tira a parte numérica do fim (quantidade/preço/total, que o leitor erra)
-    nome = nome.replace(/[\d.,xX*=\s|]+$/, "");
-    // limpa sobras
-    nome = nome.replace(/[^\wÀ-ÿ\s\/\-%.]/g, " ").replace(/\s{2,}/g, " ").trim();
-
-    var letras = (nome.match(/[A-Za-zÀ-ÿ]/g) || []).length;
-    if(letras < 3) return;                         // sobrou pouca coisa: descarta
-    if(nome.length > 45) nome = nome.slice(0, 45).trim();
-    if(nomes.indexOf(nome) === -1) nomes.push(nome);
+    // total da nota — serve de conferência
+    if(/total/i.test(l) && /\d[\d.]*,\d{2}/.test(l)){
+      var ns = l.match(/\d[\d.]*,\d{2}/g);
+      if(ns){ var v=_numBR(ns[ns.length-1]); if(totalNota===null || v>totalNota) totalNota=v; }
+      pend = null; return;
+    }
+    var num = acharNumeros(l);
+    if(num && num.unit > 0){
+      var nome = pend ? pend : limpaNome(l.slice(0, num.fim));
+      if(!pend && !pareceProduto(nome)) return;   // linha de número sem dono: ignora
+      var q = num.tot / num.unit;
+      itens.push({
+        nome: nome.slice(0,60).trim(),
+        qtd : (Math.abs(q-Math.round(q))<0.02) ? String(Math.round(q))
+                                               : q.toFixed(3).replace(".",","),
+        un  : unidadeDe(l),
+        preco: _fmtBR(num.unit),
+        total: num.tot
+      });
+      pend = null; return;
+    }
+    // "39521-ESPATULA CABO..." → item que espera a linha de números
+    var mCod = /^(\d{3,7})\s*[-–—]\s*(.{3,})$/.exec(l);
+    if(mCod && pareceProduto(mCod[2])){ pend = limpaNome(mCod[2]); return; }
+    // continuação do nome (marca/modelo em linha separada)
+    if(pend && l.length<=25 && !LIXO_NOTA.test(l) && /[A-Za-zÀ-ÿ]{3,}/.test(l))
+      pend = (pend+" "+l).trim();
   });
+  return { itens: itens, totalNota: totalNota };
+}
 
-  var cab = "# RASCUNHO — o leitor acerta NOME e erra NÚMERO.\n" +
-            "# Preencha a quantidade olhando a foto acima. Apague o que não for produto.\n" +
-            "# formato: nome | quantidade | unidade | preço\n";
-
-  if(!nomes.length){
-    return cab + "# não reconheci nenhum produto. Texto lido:\n# " +
-           texto.split("\n").filter(Boolean).join("\n# ");
-  }
-
-  var corpo = nomes.map(function(n){ return n + " |  | un | "; }).join("\n");
+function rascunhoDaNota(texto){
   var cru = "\n\n# ---- texto cru lido da nota (referência) ----\n# " +
             texto.split("\n").filter(Boolean).join("\n# ");
-  return cab + corpo + cru;
+  var r = lerNota(texto);
+
+  // ---- caminho bom: achou itens com quantidade e preço ----
+  if(r.itens.length){
+    var soma = r.itens.reduce(function(s,i){ return s + i.total; }, 0);
+    var confere = "";
+    if(r.totalNota !== null){
+      confere = (Math.abs(soma - r.totalNota) < 0.02)
+        ? "# ✅ CONFERE: os " + r.itens.length + " itens somam R$ " + _fmtBR(soma) +
+          ", igual ao total da nota.\n"
+        : "# ⚠️ DIVERGE: itens somam R$ " + _fmtBR(soma) + " mas a nota diz R$ " +
+          _fmtBR(r.totalNota) + ". Falta item ou o leitor errou — confira na foto.\n";
+    } else {
+      confere = "# ⚠️ não achei o total da nota pra conferir. Olhe a foto.\n";
+    }
+    var cab = "# RASCUNHO DA NOTA — confira na foto antes de importar.\n" +
+              confere +
+              "# formato: nome | quantidade | unidade | preço unitário\n";
+    var corpo = r.itens.map(function(i){
+      return i.nome + " | " + i.qtd + " | " + i.un + " | " + i.preco;
+    }).join("\n");
+    return cab + corpo + cru;
+  }
+
+  // ---- caminho magro: só deu pra pescar nomes ----
+  var nomes = [];
+  texto.split("\n").map(function(l){ return l.trim(); })
+       .filter(function(l){ return l.length > 2; })
+       .forEach(function(l){
+    if(LIXO_NOTA.test(l)) return;
+    if(!/[A-Za-zÀ-ÿ]{3,}/.test(l)) return;
+    var nome = limpaNome(l.replace(/[\d.,xX*=\s|]+$/, ""));
+    if((nome.match(/[A-Za-zÀ-ÿ]/g)||[]).length < 3) return;
+    if(nome.length > 45) nome = nome.slice(0,45).trim();
+    if(nomes.indexOf(nome) === -1) nomes.push(nome);
+  });
+  var cab2 = "# RASCUNHO — não consegui ler os números desta nota.\n" +
+             "# Preencha a quantidade e o preço olhando a foto acima.\n" +
+             "# formato: nome | quantidade | unidade | preço unitário\n";
+  if(!nomes.length) return cab2 + "# não reconheci nenhum produto." + cru;
+  return cab2 + nomes.map(function(n){ return n + " |  | un | "; }).join("\n") + cru;
 }
 
 // ---------- importar nota (entrada de estoque) ----------
