@@ -79,7 +79,7 @@
 
   <div id="resultado"></div>
   <button class="link-outras" id="btnOutras" style="display:none" onclick="outrasOpcoes()">📤 compartilhar de outro jeito</button>
-  <p class="aviso">TDS <b>v2.0</b> — feito por Thomas &amp; Claude · funciona offline · dados ficam só neste celular</p>
+  <p class="aviso">TDS <b>v2.1</b> — feito por Thomas &amp; Claude · funciona offline · dados ficam só neste celular</p>
 </main>
 
 <div class="rodape">
@@ -624,7 +624,30 @@ function apagarItem(id){
   if(!item) return;
   if(!confirm("Apagar \"" + item.nome + "\" do inventário?")) return;
   guardarItens(carregarItens().filter(function(i){ return i.id !== id; }));
+  limparSobras();          // a contagem do item apagado ia ficando pra trás
   desenhar();
+}
+
+// tira das contagens os ids de itens que não existem mais.
+// só roda com catálogo cheio — catálogo vazio pode ser leitura falha, e aí
+// varrer tudo seria destruir dado bom.
+function limparSobras(){
+  var itens = carregarItens();
+  if(!itens.length) return 0;
+  var vivos = {};
+  itens.forEach(function(i){ vivos[i.id] = true; });
+  var tirados = 0;
+  chavesDia().forEach(function(k){
+    var d;
+    try{ d = JSON.parse(localStorage.getItem(k)); }catch(e){ return; }
+    if(!d || typeof d.tem !== "object") return;
+    var mudou = false;
+    Object.keys(d.tem).forEach(function(id){
+      if(!vivos[id]){ delete d.tem[id]; tirados++; mudou = true; }
+    });
+    if(mudou){ try{ localStorage.setItem(k, JSON.stringify(d)); }catch(e){} }
+  });
+  return tirados;
 }
 
 // ---------- preparo de foto (realce pra leitura) ----------
