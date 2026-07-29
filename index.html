@@ -77,7 +77,7 @@
 
   <div id="resultado"></div>
   <button class="link-outras" id="btnOutras" style="display:none" onclick="outrasOpcoes()">📤 compartilhar de outro jeito</button>
-  <p class="aviso">TDS <b>v1.8</b> — feito por Thomas &amp; Claude · funciona offline · dados ficam só neste celular</p>
+  <p class="aviso">TDS <b>v1.9</b> — feito por Thomas &amp; Claude · funciona offline · dados ficam só neste celular</p>
 </main>
 
 <div class="rodape">
@@ -194,6 +194,17 @@
     <div class="acoes">
       <button class="botao fantasma" style="flex:1" onclick="fecharImport()">Cancelar</button>
       <button class="botao principal" style="flex:2" onclick="importarNota()">Importar</button>
+    </div>
+
+    <div id="duvidas" style="display:none; margin-top:14px; border-top:1px solid var(--linha); padding-top:12px;">
+      <div style="font-weight:700; font-size:.9rem; margin-bottom:4px;">🤔 É o mesmo produto?</div>
+      <p style="font-size:.8rem; color:var(--cinza); margin:0 0 10px; line-height:1.45;">
+        Achei no estoque um item de nome parecido. Como o leitor troca letra, pode ser o mesmo
+        produto escrito torto — ou pode ser outro de verdade. Só tu sabes.
+      </p>
+      <div id="listaDuvidas" style="font-size:.88rem;"></div>
+      <button class="botao principal" id="btConfirmaDuvidas" style="width:100%; margin-top:10px;"
+              onclick="confirmarDuvidas()">Confirmar e lançar</button>
     </div>
 
     <div id="conferencia" style="display:none; margin-top:14px; border-top:1px solid var(--linha); padding-top:12px;">
@@ -646,31 +657,90 @@ function numerosDaLinha(linha){
   return achados.map(function(n){ return parseFloat(n.replace(",", ".")); });
 }
 
+// ---------- privacidade: dado pessoal não entra no rascunho ----------
+function limpaPessoal(texto){
+  var saida = [], marcado = false;
+  texto.split("\n").forEach(function(l){
+    if(/\b(tel|fone|cel|whats\w*)\b/i.test(l)) l = l.replace(/\d{4,}/g, "••••");
+    l = l.replace(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g, "••.•••.•••/••••-••");
+    l = l.replace(/\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g, "•••.•••.•••-••");
+    l = l.replace(/\b\d{5}-\d{3}\b/g, "•••••-•••");
+    l = l.replace(/\b\d{4,5}[-\s.]\d{4}\b/g, "••••-••••");
+    var v = /\b(vd|na|vend(edor)?|oper(ador)?|atend(ente)?|cx|caixa)\s*[:.]\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]{2,})/i;
+    if(v.test(l)){ l = l.replace(v, function(_,rot){ return rot + ":•••"; }); marcado = true; saida.push(l); return; }
+    if(marcado && /^[A-ZÀ-Ÿ][A-ZÀ-Ÿ\s.]{2,28}$/.test(l.trim()) && !/\d/.test(l)){ saida.push("•••"); marcado = false; return; }
+    marcado = false;
+    saida.push(l);
+  });
+  return saida.join("\n");
+}
+
+// ---------- reconhecer item que já existe, mesmo escrito torto ----------
+// dígito no MEIO de palavra é letra mal lida (kr0na→krona); no começo é medida, não mexe.
+var SOSIA = {"0":"o","1":"l","2":"z","3":"e","4":"a","5":"s","6":"g","7":"t","8":"b","9":"g"};
+function soLetras(s){
+  var t = normaliza(s);
+  t = t.replace(/([a-z])(\d)/g, function(_,a,d){ return a + (SOSIA[d]||""); });
+  t = t.replace(/([a-z])(\d)/g, function(_,a,d){ return a + (SOSIA[d]||""); });
+  return t.replace(/[^a-z]/g,"");
+}
+function medidas(s){
+  var r=[], re=/(?:^|[^a-z0-9])(\d+)/g, m, t=normaliza(s);
+  while((m=re.exec(t))!==null) r.push(m[1].replace(/^0+(?=\d)/,""));
+  return r;
+}
+function contido(a,b){ return a.every(function(x){ return b.indexOf(x)!==-1; }); }
+function semelhanca(a,b){
+  a=soLetras(a); b=soLetras(b);
+  if(!a||!b) return 0;
+  if(a===b) return 1;
+  if(a.length<2||b.length<2) return 0;
+  function pares(s){ var m={},n=0; for(var i=0;i<s.length-1;i++){ var g=s.substr(i,2); m[g]=(m[g]||0)+1; n++; } return {m:m,n:n}; }
+  var A=pares(a), B=pares(b), c=0;
+  for(var g in A.m) if(B.m[g]) c += Math.min(A.m[g], B.m[g]);
+  return (2*c)/(A.n+B.n);
+}
+var LIMIAR_PARECIDO = 0.80;
+function acharNoCatalogo(nome, itens){
+  var ex = itens.find(function(i){ return normaliza(i.nome)===normaliza(nome); });
+  if(ex) return {tipo:"igual", item:ex, sem:1};
+  var mA = medidas(nome), melhor=null, ms=0;
+  itens.forEach(function(i){
+    var mB = medidas(i.nome);
+    if(!(contido(mA,mB) || contido(mB,mA))) return;   // medida diferente = produto diferente. sempre.
+    var s = semelhanca(nome, i.nome);
+    if(s > ms){ ms = s; melhor = i; }
+  });
+  return (melhor && ms >= LIMIAR_PARECIDO) ? {tipo:"parecido", item:melhor, sem:ms}
+                                           : {tipo:"novo", item:null, sem:ms};
+}
+
 function _numBR(s){ return parseFloat(String(s).replace(/\./g,"").replace(",",".")); }
 function _fmtBR(v){ return v.toFixed(2).replace(".", ","); }
 
-var LIXO_NOTA = /(CNPJ|CPF|TEL|FONE|WHATS|RUA|AV\b|AVENIDA|CEP|INSCR|CUPOM|FISCAL|SAT|TOTAL|SUBTOTAL|TROCO|DINHEIRO|CART|PIX|DEBITO|CREDITO|PAGTO|PAGAMENTO|ASSINATURA|CLIENTE|CONSUMIDOR|VENDEDOR|OPERADOR|CAIXA|LTDA|EPP|PRE-VENDA|PRÉ-VENDA|CONTROLE INTERNO|OBRIGAD|VOLTE)/i;
+var LIXO_NOTA = /(CNPJ|CPF|TEL|FONE|WHATS|RUA|AV\b|AVENIDA|CEP|INSCR|CUPOM|FISCAL|SAT|TOTAL|SUBTOTAL|TROCO|DINHEIRO|CART|PIX|DEBITO|CREDITO|PAGTO|PAGAMENTO|ASSINATURA|CLIENTE|CONSUMIDOR|VENDEDOR|OPERADOR|CAIXA|LTDA|EPP|PRE-VENDA|PRÉ-VENDA|CONTROLE INTERNO|OBRIGAD|VOLTE|\bNr\b|\bVd\b|FORMA)/i;
 
-// acha "22,0000 = 22,00"  ou  "2  24,90  49,80"  (qtd x unitário = total)
+// acha "22,0000 = 22,00" ou "2  24,90  49,80" (quantidade × unitário = total)
 function acharNumeros(l){
   var m = /([\d.]*\d,\d{2,4})\s*[=＝]\s*([\d.]*\d,\d{2})\s*$/.exec(l);
   if(m) return { unit:_numBR(m[1]), tot:_numBR(m[2]), fim:m.index };
   var toks=[], re=/\d[\d.]*,\d{2,4}|\d+(?:[.,]\d+)?/g, mm;
   while((mm = re.exec(l)) !== null) toks.push({v:mm[0], i:mm.index});
   if(toks.length >= 3){
-    var t = toks.slice(-3), a=_numBR(t[0].v), b=_numBR(t[1].v), c=_numBR(t[2].v);
+    var t=toks.slice(-3), a=_numBR(t[0].v), b=_numBR(t[1].v), c=_numBR(t[2].v);
     if(a>0 && b>0 && c>0 && Math.abs(a*b-c) < 0.02) return { unit:b, tot:c, fim:t[0].i };
   }
   return null;
 }
 function limpaNome(s){
-  return s.replace(/^[^\wÀ-ÿ]+/,"").replace(/^\s*\d{1,7}\s*[-–—.\s]\s*/,"")
+  return s.replace(/^[^\wÀ-ÿ]+/,"")
+          .replace(/^\s*\d{1,7}\s*[^\wÀ-ÿ]+\s*/,"")      // "39977-NOME" e "3352] -NOME"
+          .replace(/^\s*\d{1,7}\s+(?=[A-Za-zÀ-ÿ])/,"")   // "001 NOME"
           .replace(/[^\wÀ-ÿ\s\/\-%.]/g," ").replace(/\s{2,}/g," ").trim();
 }
 function pareceProduto(s){
-  var palavras = (s.match(/[A-Za-zÀ-ÿ]{4,}/g) || []).length;
-  var letras   = (s.match(/[A-Za-zÀ-ÿ]/g) || []).length;
-  return (palavras >= 1 || letras >= 8) && !LIXO_NOTA.test(s);
+  var p=(s.match(/[A-Za-zÀ-ÿ]{4,}/g)||[]).length, l=(s.match(/[A-Za-zÀ-ÿ]/g)||[]).length;
+  return (p>=1 || l>=8) && !LIXO_NOTA.test(s);
 }
 function unidadeDe(l){
   if(/\bkgs?\b/i.test(l)) return "kg";
@@ -683,68 +753,64 @@ function unidadeDe(l){
 function lerNota(texto){
   var linhas = texto.split("\n").map(function(l){return l.trim();})
                     .filter(function(l){return l.length>1;});
-  var itens=[], pend=null, totalNota=null;
+  var itens=[], cand=null, candLin=-99, totalNota=null;
 
-  linhas.forEach(function(l){
-    // total da nota — serve de conferência
+  linhas.forEach(function(l, idx){
     if(/total/i.test(l) && /\d[\d.]*,\d{2}/.test(l)){
-      var ns = l.match(/\d[\d.]*,\d{2}/g);
-      if(ns){ var v=_numBR(ns[ns.length-1]); if(totalNota===null || v>totalNota) totalNota=v; }
-      pend = null; return;
+      var ns=l.match(/\d[\d.]*,\d{2}/g);
+      if(ns){ var v=_numBR(ns[ns.length-1]); if(totalNota===null||v>totalNota) totalNota=v; }
+      cand=null; return;
     }
     var num = acharNumeros(l);
-    if(num && num.unit > 0){
-      var nome = pend ? pend : limpaNome(l.slice(0, num.fim));
-      if(!pend && !pareceProduto(nome)) return;   // linha de número sem dono: ignora
-      var q = num.tot / num.unit;
-      itens.push({
-        nome: nome.slice(0,60).trim(),
-        qtd : (Math.abs(q-Math.round(q))<0.02) ? String(Math.round(q))
-                                               : q.toFixed(3).replace(".",","),
-        un  : unidadeDe(l),
-        preco: _fmtBR(num.unit),
-        total: num.tot
-      });
-      pend = null; return;
+    if(num && num.unit>0){
+      var cru = l.slice(0, num.fim);
+      var proprio = limpaNome(cru);
+      // nome na própria linha só vale sem número na frente, ou com código de
+      // produto (3+ dígitos). "2, ODDPEN" é quantidade mal lida, não código.
+      var digs = (cru.match(/^\s*(\d+)/) || [null,""])[1];
+      var naLinha = pareceProduto(proprio) && (digs.length === 0 || digs.length >= 3);
+      var nome = naLinha ? proprio : ((cand && idx-candLin<=3) ? cand : null);
+      if(!nome) return;                    // número sem dono: não inventa produto
+      var q = num.tot/num.unit;
+      itens.push({ nome:nome.slice(0,60).trim(),
+        qtd:(Math.abs(q-Math.round(q))<0.02)?String(Math.round(q)):q.toFixed(3).replace(".",","),
+        un:unidadeDe(l), preco:_fmtBR(num.unit), total:num.tot });
+      cand=null; return;
     }
-    // "39521-ESPATULA CABO..." → item que espera a linha de números
-    var mCod = /^(\d{3,7})\s*[-–—]\s*(.{3,})$/.exec(l);
-    if(mCod && pareceProduto(mCod[2])){ pend = limpaNome(mCod[2]); return; }
-    // continuação do nome (marca/modelo em linha separada)
-    if(pend && l.length<=25 && !LIXO_NOTA.test(l) && /[A-Za-zÀ-ÿ]{3,}/.test(l))
-      pend = (pend+" "+l).trim();
+    var limpo = limpaNome(l);
+    // linha curta logo abaixo do candidato = marca/modelo, gruda nele
+    if(cand && idx-candLin<=2 && l.length<=25 && !LIXO_NOTA.test(l) && /[A-Za-zÀ-ÿ]{3,}/.test(l)){
+      cand = (cand+" "+limpo).trim(); candLin = idx; return;
+    }
+    if(pareceProduto(limpo)){ cand = limpo; candLin = idx; }
   });
-  return { itens: itens, totalNota: totalNota };
+  return { itens:itens, totalNota:totalNota };
 }
 
-function rascunhoDaNota(texto){
-  var cru = "\n\n# ---- texto cru lido da nota (referência) ----\n# " +
+function rascunhoDaNota(textoOriginal){
+  var texto = limpaPessoal(textoOriginal);      // nome e telefone somem antes de tudo
+  var cru = "\n\n# ---- texto cru lido da nota (dado pessoal mascarado) ----\n# " +
             texto.split("\n").filter(Boolean).join("\n# ");
   var r = lerNota(texto);
 
-  // ---- caminho bom: achou itens com quantidade e preço ----
   if(r.itens.length){
     var soma = r.itens.reduce(function(s,i){ return s + i.total; }, 0);
-    var confere = "";
-    if(r.totalNota !== null){
-      confere = (Math.abs(soma - r.totalNota) < 0.02)
-        ? "# ✅ CONFERE: os " + r.itens.length + " itens somam R$ " + _fmtBR(soma) +
-          ", igual ao total da nota.\n"
-        : "# ⚠️ DIVERGE: itens somam R$ " + _fmtBR(soma) + " mas a nota diz R$ " +
-          _fmtBR(r.totalNota) + ". Falta item ou o leitor errou — confira na foto.\n";
-    } else {
-      confere = "# ⚠️ não achei o total da nota pra conferir. Olhe a foto.\n";
-    }
-    var cab = "# RASCUNHO DA NOTA — confira na foto antes de importar.\n" +
-              confere +
-              "# formato: nome | quantidade | unidade | preço unitário\n";
+    var bateu = (r.totalNota !== null) && Math.abs(soma - r.totalNota) < 0.02;
+    var confere = bateu
+      ? "# ✅ CONFERE: os " + r.itens.length + " itens somam R$ " + _fmtBR(soma) + ", igual ao total da nota.\n"
+      : (r.totalNota !== null
+          ? "# ⚠️ DIVERGE: itens somam R$ " + _fmtBR(soma) + " mas a nota diz R$ " + _fmtBR(r.totalNota) +
+            ". Falta item ou o leitor errou — confira na foto.\n"
+          : "# ⚠️ não achei o total da nota pra conferir. Olhe a foto.\n");
+    var cab = "# RASCUNHO DA NOTA — confira na foto antes de importar.\n" + confere +
+              "# formato: nome | quantidade | unidade | preço | seção\n";
     var corpo = r.itens.map(function(i){
       return i.nome + " | " + i.qtd + " | " + i.un + " | " + i.preco;
     }).join("\n");
-    return cab + corpo + cru;
+    // conferiu: não precisa do texto cru, e assim nada de pessoal fica na tela
+    return cab + corpo + (bateu ? "" : cru);
   }
 
-  // ---- caminho magro: só deu pra pescar nomes ----
   var nomes = [];
   texto.split("\n").map(function(l){ return l.trim(); })
        .filter(function(l){ return l.length > 2; })
@@ -758,7 +824,7 @@ function rascunhoDaNota(texto){
   });
   var cab2 = "# RASCUNHO — não consegui ler os números desta nota.\n" +
              "# Preencha a quantidade e o preço olhando a foto acima.\n" +
-             "# formato: nome | quantidade | unidade | preço unitário\n";
+             "# formato: nome | quantidade | unidade | preço | seção\n";
   if(!nomes.length) return cab2 + "# não reconheci nenhum produto." + cru;
   return cab2 + nomes.map(function(n){ return n + " |  | un | "; }).join("\n") + cru;
 }
@@ -812,51 +878,102 @@ function importarNota(){
   if(!linhas.length){ aviso("Cole a lista da nota primeiro"); return; }
 
   var itens = carregarItens();
-  var dia = carregarDia();
-  // guarda o estado atual pra permitir desfazer
-  snapshotAntes = {
-    itens: JSON.parse(JSON.stringify(itens)),
-    dia: JSON.parse(JSON.stringify(dia))
-  };
-  var criados = 0, atualizados = 0, ignorados = 0;
-  var conferir = [];
-  var linhasIgnoradas = [];
+  var planos = [], ignoradas = [];
 
   linhas.forEach(function(linha){
-    // aceita |  ;  ou tab como separador
     var campos = linha.split(/\s*[|;\t]\s*/);
     var nome = (campos[0] || "").trim();
     var qtd  = lerNumero(campos[1]);
-    if(!nome || isNaN(qtd)){ ignorados++; linhasIgnoradas.push(linha); return; }
+    if(!nome || isNaN(qtd)){ ignoradas.push(linha); return; }
+    planos.push({
+      nome: nome, qtd: qtd,
+      unidade: (campos[2] || "").trim() || "un",
+      preco: lerNumero(campos[3]),
+      secao: (campos[4] || "").trim() || "Outros",
+      achado: acharNoCatalogo(nome, itens),
+      mesmo: null
+    });
+  });
 
-    var unidade = (campos[2] || "").trim() || "un";
-    var preco   = lerNumero(campos[3]);
-    var secao   = (campos[4] || "").trim() || "Outros";
+  planoPendente = { planos: planos, ignoradas: ignoradas };
+  var duvidas = planos.filter(function(p){ return p.achado.tipo === "parecido"; });
+  if(duvidas.length){ mostrarDuvidas(); return; }
+  aplicarPlano();
+}
 
-    var existente = itens.find(function(i){ return normaliza(i.nome) === normaliza(nome); });
+// ---------- "é o mesmo produto?" ----------
+var planoPendente = null;
 
-    if(existente){
-      var atual = lerNumero(dia.tem[existente.id]);
+function mostrarDuvidas(){
+  var html = "", faltam = 0;
+  planoPendente.planos.forEach(function(p, i){
+    if(p.achado.tipo !== "parecido") return;
+    if(p.mesmo === null) faltam++;
+    var selS = p.mesmo === true, selN = p.mesmo === false;
+    html += '<div style="padding:10px 0; border-bottom:1px dashed var(--linha);">' +
+      '<div style="font-size:.82rem; color:var(--cinza);">a nota traz</div>' +
+      '<b>' + escapa(p.nome) + '</b>' +
+      '<div style="font-size:.82rem; color:var(--cinza); margin-top:6px;">já tem no estoque</div>' +
+      '<b>' + escapa(p.achado.item.nome) + '</b>' +
+      '<div style="font-size:.75rem; color:var(--cinza); margin-top:4px;">' +
+        Math.round(p.achado.sem*100) + '% parecido · mesma medida</div>' +
+      '<div style="display:flex; gap:6px; margin-top:8px;">' +
+        '<button class="botao ' + (selS ? 'principal' : 'fantasma') + '" style="flex:1; font-size:.82rem;"' +
+          ' onclick="respondeDuvida(' + i + ',true)">É o mesmo — somar</button>' +
+        '<button class="botao ' + (selN ? 'principal' : 'fantasma') + '" style="flex:1; font-size:.82rem;"' +
+          ' onclick="respondeDuvida(' + i + ',false)">É outro — criar</button>' +
+      '</div></div>';
+  });
+  document.getElementById("listaDuvidas").innerHTML = html;
+  var bt = document.getElementById("btConfirmaDuvidas");
+  bt.disabled = faltam > 0;
+  bt.style.opacity = faltam > 0 ? "0.45" : "1";
+  bt.textContent = faltam > 0 ? ("Responda as " + faltam + " pergunta(s) acima") : "Confirmar e lançar";
+  document.getElementById("conferencia").style.display = "none";
+  document.getElementById("duvidas").style.display = "block";
+  document.getElementById("duvidas").scrollIntoView({behavior:"smooth", block:"nearest"});
+}
+function respondeDuvida(i, mesmo){
+  planoPendente.planos[i].mesmo = mesmo;
+  mostrarDuvidas();
+}
+function confirmarDuvidas(){
+  planoPendente.planos.forEach(function(p){
+    if(p.achado.tipo !== "parecido") return;
+    if(p.mesmo === true) p.achado.tipo = "igual";
+    else { p.achado = {tipo:"novo", item:null, sem:0}; }
+  });
+  document.getElementById("duvidas").style.display = "none";
+  aplicarPlano();
+}
+
+function aplicarPlano(){
+  var itens = carregarItens();
+  var dia = carregarDia();
+  snapshotAntes = { itens: JSON.parse(JSON.stringify(itens)), dia: JSON.parse(JSON.stringify(dia)) };
+
+  var criados = 0, atualizados = 0, conferir = [];
+
+  planoPendente.planos.forEach(function(p){
+    var alvo = p.achado.item && p.achado.tipo === "igual"
+             ? itens.find(function(i){ return i.id === p.achado.item.id; }) : null;
+    if(alvo){
+      var atual = lerNumero(dia.tem[alvo.id]);
       var antes = isNaN(atual) ? 0 : atual;
-      dia.tem[existente.id] = antes + qtd;
-      if(!isNaN(preco)) existente.preco = preco;
+      dia.tem[alvo.id] = antes + p.qtd;
+      if(!isNaN(p.preco)) alvo.preco = p.preco;
       atualizados++;
-      conferir.push({nome: existente.nome, un: existente.unidade,
-                     antes: antes, entrou: qtd, depois: antes + qtd, novo: false});
+      conferir.push({nome: alvo.nome, un: alvo.unidade, antes: antes, entrou: p.qtd,
+                     depois: antes + p.qtd, novo: false,
+                     casou: normaliza(alvo.nome) !== normaliza(p.nome) ? p.nome : null});
     } else {
-      var novo = {
-        id: "i" + Date.now() + Math.floor(Math.random()*10000),
-        nome: nome,
-        unidade: unidade,
-        secao: secao,
-        minimo: 0
-      };
-      if(!isNaN(preco)) novo.preco = preco;
+      var novo = { id:"i"+Date.now()+Math.floor(Math.random()*10000), nome:p.nome,
+                   unidade:p.unidade, secao:p.secao, minimo:0 };
+      if(!isNaN(p.preco)) novo.preco = p.preco;
       itens.push(novo);
-      dia.tem[novo.id] = qtd;
+      dia.tem[novo.id] = p.qtd;
       criados++;
-      conferir.push({nome: nome, un: unidade, antes: 0, entrou: qtd,
-                     depois: qtd, novo: true});
+      conferir.push({nome:p.nome, un:p.unidade, antes:0, entrou:p.qtd, depois:p.qtd, novo:true, casou:null});
     }
   });
 
@@ -864,23 +981,25 @@ function importarNota(){
   guardarDia(dia);
   desenhar();
 
-  // ---- tela de conferência: a pessoa bate o olho na nota e no que entrou ----
   var html = "";
   conferir.forEach(function(c){
     var marca = c.novo ? '<span class="chip ok">NOVO</span> ' : "";
+    var casou = c.casou ? '<br><span style="color:var(--cinza); font-size:.75rem;">≈ somado a partir de "' +
+                          escapa(c.casou) + '"</span>' : "";
     html += '<div style="padding:6px 0; border-bottom:1px dashed var(--linha);">' +
-              marca + '<b>' + escapa(c.nome) + '</b><br>' +
+              marca + '<b>' + escapa(c.nome) + '</b>' + casou + '<br>' +
               '<span style="color:var(--cinza); font-size:.82rem;">entrou ' +
               fmt(c.entrou) + ' ' + escapa(c.un) +
               ' &nbsp;·&nbsp; estoque: ' + fmt(c.antes) + ' → <b style="color:var(--verde-esc)">' +
               fmt(c.depois) + '</b></span></div>';
   });
-  if(linhasIgnoradas.length){
+  var ign = planoPendente.ignoradas;
+  if(ign.length){
     html += '<div style="margin-top:8px; color:var(--vermelho); font-size:.82rem;">' +
-            '⚠ ' + linhasIgnoradas.length + ' linha(s) não entendida(s):<br>' +
-            linhasIgnoradas.map(escapa).join("<br>") + '</div>';
+            '⚠ ' + ign.length + ' linha(s) não entendida(s):<br>' +
+            ign.map(escapa).join("<br>") + '</div>';
   }
-  if(!conferir.length && !linhasIgnoradas.length) html = "(nada foi lançado)";
+  if(!conferir.length && !ign.length) html = "(nada foi lançado)";
 
   document.getElementById("listaConferencia").innerHTML = html;
   document.getElementById("conferencia").style.display = "block";
@@ -888,8 +1007,9 @@ function importarNota(){
   document.getElementById("txtImport").value = "";
 
   var msg = criados + " novo(s), " + atualizados + " atualizado(s)";
-  if(ignorados) msg += ", " + ignorados + " ignorada(s)";
+  if(ign.length) msg += ", " + ign.length + " ignorada(s)";
   aviso("Lançado: " + msg);
+  planoPendente = null;
 }
 
 // ---------- a lista da manhã ----------
