@@ -77,7 +77,7 @@
 
   <div id="resultado"></div>
   <button class="link-outras" id="btnOutras" style="display:none" onclick="outrasOpcoes()">📤 compartilhar de outro jeito</button>
-  <p class="aviso">TDS <b>v1.4</b> — feito por Thomas &amp; Claude · funciona offline · dados ficam só neste celular</p>
+  <p class="aviso">TDS <b>v1.5</b> — feito por Thomas &amp; Claude · funciona offline · dados ficam só neste celular</p>
 </main>
 
 <div class="rodape">
@@ -145,7 +145,8 @@
         <button class="botao fantasma" style="flex:1; padding:10px; font-size:.85rem;" onclick="setModo('cinza')">Cinza realçado</button>
       </div>
       <canvas id="cvFoto" style="width:100%; border:1px solid var(--linha); border-radius:12px; background:#fff;"></canvas>
-      <div style="display:flex; gap:6px; margin-top:8px;">
+      <button class="botao principal" style="width:100%; margin-top:8px;" onclick="usarParaImportar()">➡️ Usar esta foto para lançar no estoque</button>
+      <div style="display:flex; gap:6px; margin-top:6px;">
         <button class="botao zap" style="flex:2" onclick="compartilharFoto()">📲 Compartilhar</button>
         <button class="botao fantasma" style="flex:1" onclick="baixarFoto()">💾 Salvar</button>
       </div>
@@ -159,8 +160,16 @@
 
 <!-- modal de importação de nota -->
 <div class="veu" id="veuImport" onclick="if(event.target===this)fecharImport()">
-  <div class="modal">
+  <div class="modal" style="max-height:92vh; overflow-y:auto;">
     <h2>📥 Importar nota</h2>
+
+    <div id="boxNota" style="display:none; margin-bottom:10px;">
+      <img id="imgNota" style="width:100%; border:1px solid var(--linha); border-radius:12px; background:#fff; max-height:45vh; object-fit:contain;">
+      <div style="display:flex; gap:6px; margin-top:4px;">
+        <button class="link-outras" style="flex:1; margin:0;" onclick="zoomNota()">🔍 ampliar / reduzir a foto</button>
+      </div>
+    </div>
+
     <p style="font-size:.82rem; color:var(--cinza); margin:0 0 10px; line-height:1.45;">
       Cole abaixo a lista da nota (uma linha por item).<br>
       Formato: <b>nome | quantidade | unidade | preço | seção</b><br>
@@ -177,6 +186,13 @@
     <div class="acoes">
       <button class="botao fantasma" style="flex:1" onclick="fecharImport()">Cancelar</button>
       <button class="botao principal" style="flex:2" onclick="importarNota()">Importar</button>
+    </div>
+
+    <div id="conferencia" style="display:none; margin-top:14px; border-top:1px solid var(--linha); padding-top:12px;">
+      <div style="font-weight:700; font-size:.9rem; margin-bottom:8px;">✅ Confira o que entrou</div>
+      <div id="listaConferencia" style="font-size:.88rem; line-height:1.7;"></div>
+      <button class="botao fantasma" style="width:100%; margin-top:10px; background:#fde8e7; color:#a3302c;"
+              onclick="desfazerImport()">↩️ Desfazer esta importação</button>
     </div>
   </div>
 </div>
@@ -370,7 +386,8 @@ function apagarItem(id){
 }
 
 // ---------- preparo de foto (realce pra leitura) ----------
-var fotoCinza = null;      // Uint8ClampedArray em tons de cinza (já realçado)
+var fotoCinza = null;      // tons de cinza já realçado
+var fotoTratadaURL = null; // imagem tratada (dataURL) mostrada na conferência
 var fotoW = 0, fotoH = 0;
 var modoFoto = "limiar";
 
@@ -559,12 +576,41 @@ function baixarFoto(){
 }
 
 // ---------- importar nota (entrada de estoque) ----------
-function abrirImport(){
+var snapshotAntes = null;   // pra poder desfazer a importação
+
+function abrirImport(comFoto){
   document.getElementById("txtImport").value = "";
+  document.getElementById("conferencia").style.display = "none";
+  var box = document.getElementById("boxNota");
+  if(comFoto && fotoTratadaURL){
+    document.getElementById("imgNota").src = fotoTratadaURL;
+    box.style.display = "block";
+  } else {
+    box.style.display = "none";
+  }
   document.getElementById("veuImport").classList.add("aberto");
 }
 function fecharImport(){
   document.getElementById("veuImport").classList.remove("aberto");
+}
+function zoomNota(){
+  var im = document.getElementById("imgNota");
+  im.style.maxHeight = (im.style.maxHeight === "none") ? "45vh" : "none";
+}
+function usarParaImportar(){
+  fotoTratadaURL = document.getElementById("cvFoto").toDataURL("image/png");
+  fecharFoto();
+  abrirImport(true);
+  aviso("Digite os itens olhando a nota 👀");
+}
+function desfazerImport(){
+  if(!snapshotAntes){ aviso("Nada pra desfazer"); return; }
+  guardarItens(snapshotAntes.itens);
+  guardarDia(snapshotAntes.dia);
+  snapshotAntes = null;
+  document.getElementById("conferencia").style.display = "none";
+  desenhar();
+  aviso("Importação desfeita ↩️");
 }
 function normaliza(s){
   return String(s).trim().toLowerCase()
@@ -577,14 +623,21 @@ function importarNota(){
 
   var itens = carregarItens();
   var dia = carregarDia();
+  // guarda o estado atual pra permitir desfazer
+  snapshotAntes = {
+    itens: JSON.parse(JSON.stringify(itens)),
+    dia: JSON.parse(JSON.stringify(dia))
+  };
   var criados = 0, atualizados = 0, ignorados = 0;
+  var conferir = [];
+  var linhasIgnoradas = [];
 
   linhas.forEach(function(linha){
     // aceita |  ;  ou tab como separador
     var campos = linha.split(/\s*[|;\t]\s*/);
     var nome = (campos[0] || "").trim();
     var qtd  = lerNumero(campos[1]);
-    if(!nome || isNaN(qtd)){ ignorados++; return; }
+    if(!nome || isNaN(qtd)){ ignorados++; linhasIgnoradas.push(linha); return; }
 
     var unidade = (campos[2] || "").trim() || "un";
     var preco   = lerNumero(campos[3]);
@@ -594,9 +647,12 @@ function importarNota(){
 
     if(existente){
       var atual = lerNumero(dia.tem[existente.id]);
-      dia.tem[existente.id] = (isNaN(atual) ? qtd : atual + qtd);
+      var antes = isNaN(atual) ? 0 : atual;
+      dia.tem[existente.id] = antes + qtd;
       if(!isNaN(preco)) existente.preco = preco;
       atualizados++;
+      conferir.push({nome: existente.nome, un: existente.unidade,
+                     antes: antes, entrou: qtd, depois: antes + qtd, novo: false});
     } else {
       var novo = {
         id: "i" + Date.now() + Math.floor(Math.random()*10000),
@@ -609,17 +665,41 @@ function importarNota(){
       itens.push(novo);
       dia.tem[novo.id] = qtd;
       criados++;
+      conferir.push({nome: nome, un: unidade, antes: 0, entrou: qtd,
+                     depois: qtd, novo: true});
     }
   });
 
   guardarItens(itens);
   guardarDia(dia);
-  fecharImport();
   desenhar();
 
+  // ---- tela de conferência: a pessoa bate o olho na nota e no que entrou ----
+  var html = "";
+  conferir.forEach(function(c){
+    var marca = c.novo ? '<span class="chip ok">NOVO</span> ' : "";
+    html += '<div style="padding:6px 0; border-bottom:1px dashed var(--linha);">' +
+              marca + '<b>' + escapa(c.nome) + '</b><br>' +
+              '<span style="color:var(--cinza); font-size:.82rem;">entrou ' +
+              fmt(c.entrou) + ' ' + escapa(c.un) +
+              ' &nbsp;·&nbsp; estoque: ' + fmt(c.antes) + ' → <b style="color:var(--verde-esc)">' +
+              fmt(c.depois) + '</b></span></div>';
+  });
+  if(linhasIgnoradas.length){
+    html += '<div style="margin-top:8px; color:var(--vermelho); font-size:.82rem;">' +
+            '⚠ ' + linhasIgnoradas.length + ' linha(s) não entendida(s):<br>' +
+            linhasIgnoradas.map(escapa).join("<br>") + '</div>';
+  }
+  if(!conferir.length && !linhasIgnoradas.length) html = "(nada foi lançado)";
+
+  document.getElementById("listaConferencia").innerHTML = html;
+  document.getElementById("conferencia").style.display = "block";
+  document.getElementById("conferencia").scrollIntoView({behavior:"smooth", block:"nearest"});
+  document.getElementById("txtImport").value = "";
+
   var msg = criados + " novo(s), " + atualizados + " atualizado(s)";
-  if(ignorados) msg += ", " + ignorados + " linha(s) ignorada(s)";
-  aviso("Nota importada: " + msg);
+  if(ignorados) msg += ", " + ignorados + " ignorada(s)";
+  aviso("Lançado: " + msg);
 }
 
 // ---------- a lista da manhã ----------
