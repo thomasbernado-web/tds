@@ -71,19 +71,62 @@
   <button class="add-btn" onclick="abrirModal()">＋ Adicionar item ao inventário</button>
   <button class="add-btn" style="color:#1c5f8a; background:#e4f0f8; border-color:#3a86b8;" onclick="abrirImport()">📥 Importar nota (entrada de estoque)</button>
   <button class="add-btn" style="color:#7a4b12; background:#fcf0dd; border-color:#e8862d;" onclick="abrirFoto()">📷 Preparar foto da nota</button>
+  <button class="add-btn" style="color:#5a3d8a; background:#efe9f8; border-color:#8b6fc4;" onclick="abrirBackup()">💾 Backup do estoque</button>
+  <div id="alertaBackup" style="display:none; background:#fde8e7; border:1px solid #e39b97; color:#a3302c; border-radius:10px; padding:9px 11px; font-size:.8rem; margin:6px 0 0; line-height:1.4;"></div>
 
   <div class="secao-titulo">Pedidos avulsos do dia (um por linha)</div>
   <textarea id="avulsos" placeholder="Ex.:&#10;papel toalha 2 fardos&#10;detergente 6 un" oninput="salvarDia()"></textarea>
 
   <div id="resultado"></div>
   <button class="link-outras" id="btnOutras" style="display:none" onclick="outrasOpcoes()">📤 compartilhar de outro jeito</button>
-  <p class="aviso">TDS <b>v1.9</b> — feito por Thomas &amp; Claude · funciona offline · dados ficam só neste celular</p>
+  <p class="aviso">TDS <b>v2.0</b> — feito por Thomas &amp; Claude · funciona offline · dados ficam só neste celular</p>
 </main>
 
 <div class="rodape">
   <button class="botao fantasma" onclick="zerarRonda()" title="Limpar contagens de hoje">🔄</button>
   <button class="botao principal" onclick="gerarLista()">GERAR LISTA</button>
   <button class="botao zap" onclick="compartilhar()" title="Mandar no WhatsApp">📲 WhatsApp</button>
+</div>
+
+
+<!-- modal de backup -->
+<div class="veu" id="veuBackup" onclick="if(event.target===this)fecharBackup()">
+  <div class="modal" style="max-height:92vh; overflow-y:auto;">
+    <h2>💾 Backup do estoque</h2>
+    <p style="font-size:.82rem; color:var(--cinza); margin:0 0 10px; line-height:1.45;">
+      Teus dados moram só neste celular. Se limpar os dados do navegador, trocar de aparelho
+      ou o aparelho der pau, some tudo. O backup é a tua cópia.
+    </p>
+    <div id="estadoBackup" style="font-size:.85rem; line-height:1.6; background:#f4f7f5;
+         border:1px solid var(--linha); border-radius:10px; padding:10px; margin-bottom:12px;"></div>
+
+    <div style="font-weight:700; font-size:.88rem; margin-bottom:6px;">1. Guardar</div>
+    <button class="botao principal" style="width:100%; margin-bottom:6px;" onclick="salvarBackup()">⬇️ Salvar arquivo do backup</button>
+    <button class="botao fantasma" style="width:100%;" onclick="copiarBackup()">📋 Copiar tudo (pra colar no WhatsApp/Notas)</button>
+    <p style="font-size:.76rem; color:var(--cinza); margin:6px 2px 14px; line-height:1.4;">
+      No iPhone, se o download não abrir, use o copiar e mande pra ti mesmo no WhatsApp.
+    </p>
+
+    <div style="font-weight:700; font-size:.88rem; margin:0 0 6px;">2. Restaurar</div>
+    <input type="file" accept=".json,application/json" onchange="arquivoBackup(event)"
+           style="width:100%; font-size:.82rem; margin-bottom:6px;">
+    <textarea id="txtBackup" placeholder="…ou cole aqui o texto do backup"
+      style="width:100%; min-height:90px; padding:10px; font-size:.8rem; border:1.5px solid var(--linha);
+             border-radius:12px; background:#fafcfb; font-family:ui-monospace,Consolas,monospace;"></textarea>
+    <button class="botao fantasma" style="width:100%; margin-top:6px;" onclick="conferirBackup()">Conferir o que tem dentro</button>
+
+    <div id="previaBackup" style="display:none; margin-top:12px; border-top:1px solid var(--linha); padding-top:12px;">
+      <div id="textoPrevia" style="font-size:.85rem; line-height:1.6;"></div>
+      <button class="botao principal" style="width:100%; margin-top:10px; background:#a3302c; border-color:#a3302c;"
+              onclick="restaurarBackup()">Restaurar mesmo assim</button>
+    </div>
+
+    <button class="botao fantasma" style="width:100%; margin-top:14px; font-size:.8rem;"
+            onclick="voltarRestauro()">↩️ Desfazer a última restauração</button>
+    <div class="acoes" style="margin-top:14px;">
+      <button class="botao fantasma" style="flex:1" onclick="fecharBackup()">Fechar</button>
+    </div>
+  </div>
 </div>
 
 <!-- modal de item -->
@@ -257,6 +300,172 @@ function guardarDia(dia){
   try{ localStorage.setItem("tds_dia_" + hojeChave(), JSON.stringify(dia)); }catch(e){}
 }
 
+// ================= backup: o estoque não pode morrer com o navegador =================
+function chavesDia(){
+  var r = [];
+  for(var i=0; i<localStorage.length; i++){
+    var k = localStorage.key(i);
+    if(k && k.indexOf("tds_dia_") === 0) r.push(k);
+  }
+  return r.sort();
+}
+function montarBackup(){
+  var dias = {};
+  chavesDia().forEach(function(k){ dias[k] = localStorage.getItem(k); });
+  return {
+    app: "TDS", formato: 1,
+    criadoEm: new Date().toISOString(),
+    itens: carregarItens(),
+    dias: dias
+  };
+}
+function resumoBackup(b){
+  var ks = Object.keys(b.dias || {}).sort();
+  return {
+    itens: (b.itens || []).length,
+    dias: ks.length,
+    primeiro: ks.length ? ks[0].replace("tds_dia_","") : null,
+    ultimo: ks.length ? ks[ks.length-1].replace("tds_dia_","") : null
+  };
+}
+function lerBackup(texto){
+  var b;
+  try{ b = JSON.parse(texto); }
+  catch(e){ return {ok:false, erro:"Isso não é um backup do TDS — o arquivo está quebrado ou é outra coisa."}; }
+  if(!b || b.app !== "TDS") return {ok:false, erro:"Esse arquivo não é do TDS."};
+  if(!Array.isArray(b.itens)) return {ok:false, erro:"O backup está sem a lista de itens."};
+  if(b.dias && typeof b.dias !== "object") return {ok:false, erro:"O backup tem as contagens em formato estranho."};
+  b.dias = b.dias || {};
+  // cada dia precisa ser um JSON válido com 'tem'
+  var ruins = [];
+  Object.keys(b.dias).forEach(function(k){
+    try{
+      var d = JSON.parse(b.dias[k]);
+      if(!d || typeof d.tem !== "object") ruins.push(k);
+    }catch(e){ ruins.push(k); }
+  });
+  if(ruins.length === Object.keys(b.dias).length && ruins.length > 0)
+    return {ok:false, erro:"As contagens do backup estão ilegíveis."};
+  ruins.forEach(function(k){ delete b.dias[k]; });
+  return {ok:true, dados:b, resumo:resumoBackup(b), descartados:ruins.length};
+}
+function aplicarBackup(b){
+  // guarda o estado atual pra poder voltar atrás
+  try{ localStorage.setItem("tds_antes_restauro", JSON.stringify(montarBackup())); }catch(e){}
+  chavesDia().forEach(function(k){ localStorage.removeItem(k); });
+  guardarItens(b.itens);
+  Object.keys(b.dias).forEach(function(k){
+    try{ localStorage.setItem(k, b.dias[k]); }catch(e){}
+  });
+}
+function diasDesdeBackup(){
+  var q = localStorage.getItem("tds_ultimo_backup");
+  if(!q) return null;
+  var d = new Date(q);
+  if(isNaN(d.getTime())) return null;
+  return Math.floor((Date.now() - d.getTime()) / 86400000);
+}
+
+// ---------- tela de backup ----------
+var backupLido = null;
+
+function abrirBackup(){
+  backupLido = null;
+  document.getElementById("previaBackup").style.display = "none";
+  document.getElementById("txtBackup").value = "";
+  var b = montarBackup(), r = resumoBackup(b);
+  var d = diasDesdeBackup();
+  var quando = d === null ? '<b style="color:var(--vermelho)">nunca</b>'
+             : d === 0 ? '<b style="color:var(--verde-esc)">hoje</b>'
+             : d === 1 ? "ontem"
+             : ("há <b" + (d >= 7 ? ' style="color:var(--vermelho)"' : "") + ">" + d + " dias</b>");
+  document.getElementById("estadoBackup").innerHTML =
+    "Agora neste celular: <b>" + r.itens + "</b> item(ns) no inventário e <b>" + r.dias +
+    "</b> dia(s) de contagem" +
+    (r.primeiro ? " (de " + r.primeiro + " a " + r.ultimo + ")" : "") + ".<br>" +
+    "Último backup: " + quando + ".";
+  document.getElementById("veuBackup").classList.add("aberto");
+}
+function fecharBackup(){ document.getElementById("veuBackup").classList.remove("aberto"); }
+
+function salvarBackup(){
+  var b = montarBackup();
+  var txt = JSON.stringify(b, null, 2);
+  var nome = "tds-backup-" + hojeChave() + ".json";
+  try{
+    var blob = new Blob([txt], {type:"application/json"});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url; a.download = nome;
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); }, 2000);
+    localStorage.setItem("tds_ultimo_backup", new Date().toISOString());
+    aviso("Backup salvo: " + nome);
+    abrirBackup();
+  }catch(e){
+    aviso("Não deu pra baixar. Use o botão de copiar.");
+  }
+}
+function copiarBackup(){
+  var txt = JSON.stringify(montarBackup());
+  var cx = document.getElementById("txtBackup");
+  cx.value = txt;
+  cx.focus(); cx.select();
+  var feito = false;
+  try{ feito = document.execCommand("copy"); }catch(e){}
+  if(navigator.clipboard && !feito){
+    navigator.clipboard.writeText(txt).then(function(){ aviso("Copiado — cole num lugar seguro"); },
+                                            function(){ aviso("Selecione o texto e copie na mão"); });
+  } else {
+    aviso(feito ? "Copiado — cole num lugar seguro" : "Selecione o texto e copie na mão");
+  }
+  localStorage.setItem("tds_ultimo_backup", new Date().toISOString());
+}
+function arquivoBackup(ev){
+  var f = ev.target.files && ev.target.files[0];
+  if(!f) return;
+  var fr = new FileReader();
+  fr.onload = function(){ document.getElementById("txtBackup").value = fr.result; conferirBackup(); };
+  fr.readAsText(f);
+}
+function conferirBackup(){
+  var txt = document.getElementById("txtBackup").value || "";
+  if(!txt.trim()){ aviso("Cole o backup ou escolha o arquivo"); return; }
+  var r = lerBackup(txt);
+  if(!r.ok){ backupLido = null;
+    document.getElementById("previaBackup").style.display = "none";
+    aviso(r.erro); return; }
+  backupLido = r.dados;
+  var atual = resumoBackup(montarBackup());
+  document.getElementById("textoPrevia").innerHTML =
+    "<b>O backup tem:</b> " + r.resumo.itens + " item(ns), " + r.resumo.dias + " dia(s)" +
+    (r.resumo.primeiro ? " (de " + r.resumo.primeiro + " a " + r.resumo.ultimo + ")" : "") + "<br>" +
+    "<b>Você tem hoje:</b> " + atual.itens + " item(ns), " + atual.dias + " dia(s)<br><br>" +
+    '<span style="color:var(--vermelho)">Restaurar <b>apaga</b> o que está aí e põe o do backup no lugar.</span>' +
+    (r.descartados ? "<br><span style='color:var(--cinza); font-size:.78rem;'>" + r.descartados +
+                     " dia(s) ilegível(is) serão ignorados.</span>" : "");
+  document.getElementById("previaBackup").style.display = "block";
+}
+function restaurarBackup(){
+  if(!backupLido){ aviso("Confira o backup primeiro"); return; }
+  aplicarBackup(backupLido);
+  backupLido = null;
+  desenhar();
+  document.getElementById("previaBackup").style.display = "none";
+  document.getElementById("txtBackup").value = "";
+  abrirBackup();
+  aviso("Estoque restaurado");
+}
+function voltarRestauro(){
+  var antes = localStorage.getItem("tds_antes_restauro");
+  if(!antes){ aviso("Não tem restauração pra desfazer"); return; }
+  var r = lerBackup(antes);
+  if(!r.ok){ aviso("A cópia de segurança está ilegível"); return; }
+  aplicarBackup(r.dados);
+  desenhar(); abrirBackup();
+  aviso("Voltou pro estado de antes");
+}
+
 // ---------- desenhar a ronda ----------
 function desenhar(){
   var itens = carregarItens();
@@ -310,6 +519,20 @@ function desenhar(){
   var pendentes = itens.filter(function(i){ return isNaN(lerNumero(dia.tem[i.id])); }).length;
   document.getElementById("contagem").textContent =
     itens.length ? "· " + itens.length + " itens" + (pendentes ? " (" + pendentes + " sem contagem)" : " ✓") : "";
+
+  // cutucão de backup: só incomoda quando já tem coisa a perder
+  var alerta = document.getElementById("alertaBackup");
+  if(alerta){
+    var d = diasDesdeBackup();
+    if(itens.length >= 3 && (d === null || d >= 7)){
+      alerta.innerHTML = (d === null)
+        ? "⚠️ Você tem " + itens.length + " itens cadastrados e <b>nenhum backup</b>. Se limpar os dados do navegador, perde tudo."
+        : "⚠️ Teu último backup foi há <b>" + d + " dias</b>. Vale fazer outro.";
+      alerta.style.display = "block";
+    } else {
+      alerta.style.display = "none";
+    }
+  }
 }
 function escapa(s){
   return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
