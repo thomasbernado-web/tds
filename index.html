@@ -77,7 +77,7 @@
 
   <div id="resultado"></div>
   <button class="link-outras" id="btnOutras" style="display:none" onclick="outrasOpcoes()">📤 compartilhar de outro jeito</button>
-  <p class="aviso">TDS <b>v1.5</b> — feito por Thomas &amp; Claude · funciona offline · dados ficam só neste celular</p>
+  <p class="aviso">TDS <b>v1.7</b> — feito por Thomas &amp; Claude · funciona offline · dados ficam só neste celular</p>
 </main>
 
 <div class="rodape">
@@ -141,11 +141,13 @@
 
     <div id="areaFoto" style="display:none; margin-top:12px;">
       <div style="display:flex; gap:6px; margin-bottom:8px;">
-        <button class="botao fantasma" style="flex:1; padding:10px; font-size:.85rem;" onclick="setModo('limiar')">Preto e branco</button>
-        <button class="botao fantasma" style="flex:1; padding:10px; font-size:.85rem;" onclick="setModo('cinza')">Cinza realçado</button>
+        <button class="botao fantasma" id="btModoCinza" style="flex:1; padding:10px; font-size:.85rem; background:#e2f5ea; color:#157a44; font-weight:700;" onclick="setModo('cinza')">Cinza ✓ recomendado</button>
+        <button class="botao fantasma" id="btModoPB" style="flex:1; padding:10px; font-size:.85rem;" onclick="setModo('limiar')">Preto e branco</button>
       </div>
       <canvas id="cvFoto" style="width:100%; border:1px solid var(--linha); border-radius:12px; background:#fff;"></canvas>
       <button class="botao principal" style="width:100%; margin-top:8px;" onclick="usarParaImportar()">➡️ Usar esta foto para lançar no estoque</button>
+      <button class="botao fantasma" id="btnOCR" style="width:100%; margin-top:6px; background:#efe6fa; color:#5a3b8c;" onclick="lerTextoDaFoto()">🔤 Tentar ler o texto (rascunho)</button>
+      <div id="statusOCR" style="display:none; font-size:.8rem; color:var(--cinza); text-align:center; padding:8px;"></div>
       <div style="display:flex; gap:6px; margin-top:6px;">
         <button class="botao zap" style="flex:2" onclick="compartilharFoto()">📲 Compartilhar</button>
         <button class="botao fantasma" style="flex:1" onclick="baixarFoto()">💾 Salvar</button>
@@ -168,6 +170,12 @@
       <div style="display:flex; gap:6px; margin-top:4px;">
         <button class="link-outras" style="flex:1; margin:0;" onclick="zoomNota()">🔍 ampliar / reduzir a foto</button>
       </div>
+    </div>
+
+    <div id="avisoRascunho" style="display:none; background:#fff6e0; border:1px solid #e8b45c; color:#7a4b12;
+         border-radius:10px; padding:10px; font-size:.82rem; margin-bottom:10px; line-height:1.4;">
+      ⚠️ <b>Rascunho automático.</b> O leitor erra número — principalmente quantidade e vírgula.
+      Confira cada linha olhando a foto acima antes de importar.
     </div>
 
     <p style="font-size:.82rem; color:var(--cinza); margin:0 0 10px; line-height:1.45;">
@@ -389,7 +397,7 @@ function apagarItem(id){
 var fotoCinza = null;      // tons de cinza já realçado
 var fotoTratadaURL = null; // imagem tratada (dataURL) mostrada na conferência
 var fotoW = 0, fotoH = 0;
-var modoFoto = "limiar";
+var modoFoto = "cinza";   // cinza lê melhor que P&B (testado)
 
 function abrirFoto(){
   document.getElementById("areaFoto").style.display = "none";
@@ -547,6 +555,13 @@ function desenharFoto(){
 
 function setModo(m){
   modoFoto = m;
+  var c = document.getElementById("btModoCinza"), p = document.getElementById("btModoPB");
+  if(c && p){
+    var ativo = "background:#e2f5ea; color:#157a44; font-weight:700;";
+    var normal = "background:#eef1f0; color:#1d2b26; font-weight:400;";
+    c.style.cssText = "flex:1; padding:10px; font-size:.85rem;" + (m==="cinza"?ativo:normal);
+    p.style.cssText = "flex:1; padding:10px; font-size:.85rem;" + (m==="limiar"?ativo:normal);
+  }
   aviso(m === "limiar" ? "Preto e branco" : "Cinza realçado");
   desenharFoto();
 }
@@ -575,12 +590,111 @@ function baixarFoto(){
   });
 }
 
+// ---------- leitura automática (RASCUNHO — sempre conferir!) ----------
+var tessPronto = false;
+var textoBruto = "";
+
+function carregarTesseract(cb){
+  if(window.Tesseract){ cb(); return; }
+  var s = document.createElement("script");
+  s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+  s.onload = cb;
+  s.onerror = function(){
+    statusOCR("❌ Não consegui baixar o leitor. Precisa de internet na primeira vez.");
+  };
+  document.head.appendChild(s);
+}
+function statusOCR(txt){
+  var el = document.getElementById("statusOCR");
+  el.style.display = txt ? "block" : "none";
+  el.textContent = txt;
+}
+
+function lerTextoDaFoto(){
+  if(!fotoCinza){ aviso("Tire a foto primeiro"); return; }
+  document.getElementById("btnOCR").disabled = true;
+  statusOCR("Baixando o leitor (só na primeira vez)...");
+  carregarTesseract(function(){
+    statusOCR("Lendo a nota... isso leva alguns segundos ⏳");
+    var url = document.getElementById("cvFoto").toDataURL("image/png");
+    window.Tesseract.recognize(url, "por", {
+      logger: function(m){
+        if(m.status === "recognizing text"){
+          statusOCR("Lendo a nota... " + Math.round(m.progress * 100) + "%");
+        }
+      }
+    }).then(function(res){
+      textoBruto = (res && res.data && res.data.text) ? res.data.text : "";
+      statusOCR("");
+      document.getElementById("btnOCR").disabled = false;
+      if(!textoBruto.trim()){ aviso("Não consegui ler nada nessa foto"); return; }
+      fotoTratadaURL = url;
+      fecharFoto();
+      abrirImport(true);
+      document.getElementById("txtImport").value = rascunhoDaNota(textoBruto);
+      document.getElementById("avisoRascunho").style.display = "block";
+      aviso("Rascunho pronto — CONFIRA os números 👀");
+    }).catch(function(e){
+      statusOCR("❌ Deu erro na leitura: " + e.message);
+      document.getElementById("btnOCR").disabled = false;
+    });
+  });
+}
+
+function numerosDaLinha(linha){
+  var achados = linha.match(/\d+(?:[.,]\d+)?/g) || [];
+  return achados.map(function(n){ return parseFloat(n.replace(",", ".")); });
+}
+
+function rascunhoDaNota(texto){
+  // Filosofia: o leitor acerta PALAVRA e erra NÚMERO.
+  // Então trazemos os nomes prontos e deixamos a quantidade em branco,
+  // pra pessoa preencher olhando a nota. Nunca chutamos número.
+  var LIXO = /(CNPJ|CPF|TEL|FONE|WHATS|RUA|AV\b|AVENIDA|CEP|INSCR|IE\b|CUPOM|FISCAL|NOTA|SAT|TOTAL|SUBTOTAL|TROCO|DINHEIRO|CARTAO|CARTÃO|PIX|DEBITO|DÉBITO|CREDITO|CRÉDITO|PAGTO|PAGAMENTO|ASSINATURA|CLIENTE|VENDEDOR|OPERADOR|CAIXA|ITEM\s+DESCRI|DESCRICAO|DESCRIÇÃO|QTD|VLR|VALOR|UNIT|OBRIGAD|VOLTE|SEMPRE|LTDA|ME\b|EPP|PRE-VENDA|PRÉ-VENDA|CONTROLE INTERNO|DATA|HORA)/i;
+
+  var linhas = texto.split("\n").map(function(l){ return l.trim(); })
+                    .filter(function(l){ return l.length > 2; });
+  var nomes = [];
+
+  linhas.forEach(function(l){
+    if(LIXO.test(l)) return;                       // cabeçalho, rodapé, pagamento
+    if(!/[A-Za-zÀ-ÿ]{3,}/.test(l)) return;         // linha só de números/traços
+
+    // tira sujeira e código do começo (". 009 ARROZ..." -> "ARROZ...")
+    var nome = l.replace(/^[^\wÀ-ÿ]+/, "").replace(/^\s*\d{1,5}[\s.\-]+/, "");
+    // tira a parte numérica do fim (quantidade/preço/total, que o leitor erra)
+    nome = nome.replace(/[\d.,xX*=\s|]+$/, "");
+    // limpa sobras
+    nome = nome.replace(/[^\wÀ-ÿ\s\/\-%.]/g, " ").replace(/\s{2,}/g, " ").trim();
+
+    var letras = (nome.match(/[A-Za-zÀ-ÿ]/g) || []).length;
+    if(letras < 3) return;                         // sobrou pouca coisa: descarta
+    if(nome.length > 45) nome = nome.slice(0, 45).trim();
+    if(nomes.indexOf(nome) === -1) nomes.push(nome);
+  });
+
+  var cab = "# RASCUNHO — o leitor acerta NOME e erra NÚMERO.\n" +
+            "# Preencha a quantidade olhando a foto acima. Apague o que não for produto.\n" +
+            "# formato: nome | quantidade | unidade | preço\n";
+
+  if(!nomes.length){
+    return cab + "# não reconheci nenhum produto. Texto lido:\n# " +
+           texto.split("\n").filter(Boolean).join("\n# ");
+  }
+
+  var corpo = nomes.map(function(n){ return n + " |  | un | "; }).join("\n");
+  var cru = "\n\n# ---- texto cru lido da nota (referência) ----\n# " +
+            texto.split("\n").filter(Boolean).join("\n# ");
+  return cab + corpo + cru;
+}
+
 // ---------- importar nota (entrada de estoque) ----------
 var snapshotAntes = null;   // pra poder desfazer a importação
 
 function abrirImport(comFoto){
   document.getElementById("txtImport").value = "";
   document.getElementById("conferencia").style.display = "none";
+  document.getElementById("avisoRascunho").style.display = "none";
   var box = document.getElementById("boxNota");
   if(comFoto && fotoTratadaURL){
     document.getElementById("imgNota").src = fotoTratadaURL;
@@ -618,7 +732,8 @@ function normaliza(s){
 }
 function importarNota(){
   var bruto = document.getElementById("txtImport").value || "";
-  var linhas = bruto.split("\n").map(function(l){ return l.trim(); }).filter(Boolean);
+  var linhas = bruto.split("\n").map(function(l){ return l.trim(); })
+                 .filter(function(l){ return l && l[0] !== "#"; });
   if(!linhas.length){ aviso("Cole a lista da nota primeiro"); return; }
 
   var itens = carregarItens();
